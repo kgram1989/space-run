@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Shooter 3D</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <h1>SPACE SHOOTER</h1>
+            <div class="stats">
+                <div class="score">Score: <span id="score">0</span></div>
+                <div class="lives">Lives: <span id="lives">3</span></div>
+                <div class="high-score">High: <span id="highScore">0</span></div>
+                <div class="level">Level: <span id="level">1</span></div>
+            </div>
+            <div id="bossHealthBar" class="boss-health-bar hidden">
+                <div class="boss-label">BOSS</div>
+                <div class="health-bar-container">
+                    <div class="health-bar-fill" id="bossHealthFill"></div>
+                </div>
+            </div>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="startScreen" class="start-screen">
+            <h2>SELECT DIFFICULTY</h2>
+            <div class="difficulty-buttons">
+                <button class="difficulty-btn" data-difficulty="easy">EASY</button>
+                <button class="difficulty-btn" data-difficulty="medium">MEDIUM</button>
+                <button class="difficulty-btn" data-difficulty="hard">HARD</button>
+            </div>
+            <p class="difficulty-info">Easy: Slower enemies | Medium: Normal speed | Hard: Fast & furious!</p>
+        </div>
+        <div id="gameOver" class="game-over hidden">
+            <h2>GAME OVER</h2>
+            <p>Final Score: <span id="finalScore">0</span></p>
+            <p class="difficulty-display">Difficulty: <span id="gameDifficulty"></span></p>
+            <div id="highScores" style="margin: 20px 0; text-align: left; max-width: 400px;"></div>
+            <button id="restartBtn">Play Again</button>
+        </div>
+        <div class="controls">
+            <p>Controls: ← → to Move | Space to Shoot | ESC to Exit</p>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html>
