@@ -666,6 +666,7 @@ function nextLevel() {
     enemiesDefeatedThisLevel = 0;
     enemiesRequiredForBoss = 10 + (currentLevel * 2);  // More enemies each level
     levelTransitioning = false;  // Allow boss spawning again
+    lastEnemySpawn = 0;  // Reset spawn timer to spawn enemies immediately
 
     updateLevel();
 
@@ -1207,6 +1208,7 @@ function startGame() {
     bossActive = false;
     boss = null;
     levelTransitioning = false;
+    lastEnemySpawn = 0;  // Reset spawn timer
     bossHealthBar.classList.add('hidden');
 
     player.x = 0;
