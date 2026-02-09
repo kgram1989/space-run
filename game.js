@@ -599,6 +599,7 @@ function checkBossCollision() {
 
             if (boss.health <= 0) {
                 defeatBoss();
+                break;  // Exit loop - boss is defeated, no need to check more bullets
             }
         }
     }
