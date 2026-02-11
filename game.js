@@ -46,6 +46,17 @@ let boss = null;
 let levelTransitioning = false;  // Prevent spawning during level transition
 let portal = null;
 let portalAnimating = false;
+let portalAnimationId = null;
+let levelTransitionTimeout = null;
+
+// Constants for timing and spacing
+const PORTAL_SPAWN_DELAY = 1500; // ms after boss defeat
+const LEVEL_MESSAGE_DURATION = 2500; // ms
+const LEVEL_MESSAGE_FADE_TIME = 500; // ms
+const LEVEL_MESSAGE_TOTAL_TIME = 3000; // LEVEL_MESSAGE_DURATION + LEVEL_MESSAGE_FADE_TIME
+const PLANET_DEPTH_SPACING = 40; // units between planet instances
+const PLANET_RESPAWN_MIN_DISTANCE = 100; // minimum z distance for planet respawn
+const PLANET_RESPAWN_MAX_DISTANCE = 40; // additional random distance
 
 // Difficulty settings
 const difficultySettings = {
@@ -303,7 +314,18 @@ const keys = {};
 // Sound System - Web Audio API
 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
+async function ensureAudioContext() {
+    if (audioContext.state === 'suspended') {
+        try {
+            await audioContext.resume();
+        } catch (e) {
+            console.warn('Failed to resume audio context:', e);
+        }
+    }
+}
+
 function playShootSound() {
+    ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
 
@@ -321,6 +343,7 @@ function playShootSound() {
 }
 
 function playExplosionSound() {
+    ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
     const filter = audioContext.createBiquadFilter();
@@ -344,6 +367,7 @@ function playExplosionSound() {
 }
 
 function playHitSound() {
+    ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
 
@@ -361,6 +385,7 @@ function playHitSound() {
 }
 
 function playGameOverSound() {
+    ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
 
@@ -379,6 +404,7 @@ function playGameOverSound() {
 }
 
 function playBossHitSound() {
+    ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
 
@@ -396,6 +422,7 @@ function playBossHitSound() {
 }
 
 function playLevelCompleteSound() {
+    ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
 
@@ -414,6 +441,7 @@ function playLevelCompleteSound() {
 }
 
 function playPortalSound() {
+    ensureAudioContext();
     // Create multiple oscillators for a rich portal/wormhole sound
     const duration = 2.5;
 
@@ -821,7 +849,7 @@ function defeatBoss() {
     setTimeout(() => {
         createPortal();
         animatePortalEntry();
-    }, 1500);
+    }, PORTAL_SPAWN_DELAY);
 }
 
 // Create Portal/Wormhole
@@ -854,15 +882,25 @@ function createPortal() {
     const glow = new THREE.Mesh(glowGeometry, glowMaterial);
     portalGroup.add(glow);
 
+    // Shared geometry and materials for portal particles to prevent memory leak
+    const sharedParticleGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+    const particleMaterialCyan = new THREE.MeshBasicMaterial({
+        color: 0x00ffff,
+        transparent: true,
+        opacity: 0.8
+    });
+    const particleMaterialBlue = new THREE.MeshBasicMaterial({
+        color: 0x0088ff,
+        transparent: true,
+        opacity: 0.8
+    });
+
     // Portal particles
     for (let i = 0; i < 30; i++) {
-        const particleGeometry = new THREE.SphereGeometry(0.15, 8, 8);
-        const particleMaterial = new THREE.MeshBasicMaterial({
-            color: Math.random() > 0.5 ? 0x00ffff : 0x0088ff,
-            transparent: true,
-            opacity: 0.8
-        });
-        const particleMesh = new THREE.Mesh(particleGeometry, particleMaterial);
+        const particleMesh = new THREE.Mesh(
+            sharedParticleGeometry,
+            Math.random() > 0.5 ? particleMaterialCyan : particleMaterialBlue
+        );
 
         const angle = (i / 30) * Math.PI * 2;
         const radius = 4 + Math.random() * 3;
@@ -949,12 +987,23 @@ function animatePortalEntry() {
         const scale = 1 - progress * 0.5;
         player.mesh.scale.set(scale, scale, scale);
 
-        if (progress < 1) {
-            requestAnimationFrame(animate);
+        if (progress < 1 && gameRunning) {
+            portalAnimationId = requestAnimationFrame(animate);
         } else {
             // Entry complete, transition to next level
             portalAnimating = false;
             if (portal) {
+                // Dispose of geometries and materials to prevent memory leak
+                portal.traverse((child) => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(material => material.dispose());
+                        } else {
+                            child.material.dispose();
+                        }
+                    }
+                });
                 scene.remove(portal);
                 portal = null;
             }
@@ -995,10 +1044,12 @@ function nextLevel() {
     // Show level message
     showLevelMessage(currentLevel);
 
-    // Allow enemy spawning after level message disappears (3 seconds: 2.5s display + 0.5s fade)
-    setTimeout(() => {
-        levelTransitioning = false;
-    }, 3000);
+    // Allow enemy spawning after level message disappears
+    levelTransitionTimeout = setTimeout(() => {
+        if (gameRunning) {
+            levelTransitioning = false;
+        }
+    }, LEVEL_MESSAGE_TOTAL_TIME);
 }
 
 function showLevelMessage(levelNumber) {
@@ -1016,10 +1067,17 @@ function showMessageBox(title, subtitle) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'level-message-box';
 
-    messageDiv.innerHTML = `
-        <div class="level-title">${title}</div>
-        <div class="level-subtitle">${subtitle}</div>
-    `;
+    // Create title element safely
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'level-title';
+    titleDiv.textContent = title;
+    messageDiv.appendChild(titleDiv);
+
+    // Create subtitle element safely
+    const subtitleDiv = document.createElement('div');
+    subtitleDiv.className = 'level-subtitle';
+    subtitleDiv.textContent = subtitle;
+    messageDiv.appendChild(subtitleDiv);
 
     messageDiv.style.position = 'absolute';
     messageDiv.style.top = '50%';
@@ -1028,12 +1086,17 @@ function showMessageBox(title, subtitle) {
     messageDiv.style.zIndex = '100';
     messageDiv.style.animation = 'modalFadeIn 0.5s ease-out';
 
-    document.querySelector('.game-container').appendChild(messageDiv);
+    const gameContainer = document.querySelector('.game-container');
+    if (!gameContainer) {
+        console.warn('Game container element not found - level message will not be displayed');
+        return;
+    }
+    gameContainer.appendChild(messageDiv);
 
     setTimeout(() => {
         messageDiv.style.animation = 'modalFadeOut 0.5s ease-out';
-        setTimeout(() => messageDiv.remove(), 500);
-    }, 2500);
+        setTimeout(() => messageDiv.remove(), LEVEL_MESSAGE_FADE_TIME);
+    }, LEVEL_MESSAGE_DURATION);
 }
 
 // Enemies
@@ -1515,8 +1578,7 @@ class BackgroundObjectManager {
 
             // Stagger distances: spread instances across depth range
             const baseDistance = planetData.distance;
-            const depthSpacing = 40; // Space between instances
-            const instanceDistance = baseDistance + (instance * depthSpacing);
+            const instanceDistance = baseDistance + (instance * PLANET_DEPTH_SPACING);
 
             // Position planet further to the sides and higher up (out of gameplay area)
             const side = Math.random() < 0.5 ? -1 : 1; // Choose left or right side
@@ -1593,7 +1655,7 @@ class BackgroundObjectManager {
                 const side = Math.random() < 0.5 ? -1 : 1; // Choose left or right side
                 const randomX = side * (40 + Math.random() * 30); // Range: ±40 to ±70
                 const randomY = -2 + Math.random() * 30; // Range: -2 to 28 (higher up)
-                const respawnDistance = 90 + Math.random() * 40; // Range: 90-130 (further back)
+                const respawnDistance = PLANET_RESPAWN_MIN_DISTANCE + Math.random() * PLANET_RESPAWN_MAX_DISTANCE; // Range: 100-140 (safer distance)
                 planet.mesh.position.set(randomX, randomY, respawnDistance);
 
                 // Add variety: randomize scale (85%-115% of original)
@@ -1671,16 +1733,26 @@ function updateHighScoreDisplay() {
 
 function initializeBriefingScreen() {
     const briefingDiv = document.querySelector('.briefing-text');
-    if (!briefingDiv) return;
+    if (!briefingDiv) {
+        console.warn('Briefing text element not found - mission briefing will not be displayed');
+        return;
+    }
 
-    // Parse briefing text and create paragraphs
+    // Parse briefing text and create paragraphs safely
     const lines = GAME_NARRATIVE.mission.briefing.split('\n').filter(line => line.trim());
-    briefingDiv.innerHTML = lines.map(line => {
+
+    // Clear existing content
+    briefingDiv.innerHTML = '';
+
+    // Create paragraph elements safely
+    lines.forEach(line => {
+        const p = document.createElement('p');
         if (line.includes('[CLASSIFIED]') || line.includes('[REDACTED]')) {
-            return `<p class="classified">${line}</p>`;
+            p.className = 'classified';
         }
-        return `<p>${line}</p>`;
-    }).join('');
+        p.textContent = line;
+        briefingDiv.appendChild(p);
+    });
 }
 
 function isTopScore(score) {
@@ -1732,6 +1804,17 @@ function togglePause() {
 // Game Over
 function endGame() {
     gameRunning = false;
+
+    // Cancel any ongoing animations and timers
+    if (portalAnimationId) {
+        cancelAnimationFrame(portalAnimationId);
+        portalAnimationId = null;
+    }
+    if (levelTransitionTimeout) {
+        clearTimeout(levelTransitionTimeout);
+        levelTransitionTimeout = null;
+    }
+
     playGameOverSound();  // Play game over sound
 
     finalScoreElement.textContent = score;
@@ -1835,10 +1918,12 @@ function startGame() {
 
     showLevelMessage(1);
 
-    // Allow enemy spawning after level message disappears (3 seconds: 2.5s display + 0.5s fade)
-    setTimeout(() => {
-        levelTransitioning = false;
-    }, 3000);
+    // Allow enemy spawning after level message disappears
+    levelTransitionTimeout = setTimeout(() => {
+        if (gameRunning) {
+            levelTransitioning = false;
+        }
+    }, LEVEL_MESSAGE_TOTAL_TIME);
 
     gameLoop();
 }
