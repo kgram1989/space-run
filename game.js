@@ -31,6 +31,19 @@ renderer.setPixelRatio(window.devicePixelRatio);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+// Post-processing setup - Bloom effect for glow
+const composer = new THREE.EffectComposer(renderer);
+const renderPass = new THREE.RenderPass(scene, camera);
+composer.addPass(renderPass);
+
+const bloomPass = new THREE.UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    0.6,  // strength
+    0.4,  // radius
+    0.85  // threshold
+);
+composer.addPass(bloomPass);
+
 let gameRunning = false;
 let gamePaused = false;
 let score = 0;
@@ -49,6 +62,28 @@ let portalAnimating = false;
 let portalAnimationId = null;
 let levelTransitionTimeout = null;
 
+// Camera shake system
+let cameraShake = {
+    intensity: 0,
+    decay: 0.9,
+    offsetX: 0,
+    offsetY: 0,
+    offsetZ: 0
+};
+const baseCameraPosition = { x: 0, y: 12, z: -18 };
+const baseCameraLookAt = { x: 0, y: -3, z: 25 };
+
+// Cinematic camera system
+let cinematicCamera = {
+    active: false,
+    type: null,  // 'boss_defeat' or 'portal_zoom'
+    progress: 0,
+    duration: 0,
+    startPos: { x: 0, y: 0, z: 0 },
+    targetPos: { x: 0, y: 0, z: 0 },
+    lookAtTarget: { x: 0, y: 0, z: 0 }
+};
+
 // Constants for timing and spacing
 const PORTAL_SPAWN_DELAY = 1500; // ms after boss defeat
 const LEVEL_MESSAGE_DURATION = 2500; // ms
@@ -57,6 +92,19 @@ const LEVEL_MESSAGE_TOTAL_TIME = 3000; // LEVEL_MESSAGE_DURATION + LEVEL_MESSAGE
 const PLANET_DEPTH_SPACING = 40; // units between planet instances
 const PLANET_RESPAWN_MIN_DISTANCE = 100; // minimum z distance for planet respawn
 const PLANET_RESPAWN_MAX_DISTANCE = 40; // additional random distance
+
+// Easing Functions
+function easeOutQuad(t) {
+    return t * (2 - t);  // Smooth deceleration
+}
+
+function easeInOutQuad(t) {
+    return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;  // Smooth acceleration and deceleration
+}
+
+function lerp(start, end, alpha) {
+    return start + (end - start) * alpha;  // Linear interpolation
+}
 
 // Difficulty settings
 const difficultySettings = {
@@ -193,7 +241,10 @@ const player = {
     acceleration: 0.03,  // Slower acceleration for smoother control
     friction: 0.92,  // Higher friction for faster stopping
     velocityX: 0,
-    mesh: null
+    mesh: null,
+    wings: null,  // Reference to wings for animation
+    leftEngine: null,  // Reference to left engine glow
+    rightEngine: null  // Reference to right engine glow
 };
 
 // Create Player Mesh - Modern Fighter Design
@@ -297,6 +348,9 @@ function createPlayer() {
     group.scale.set(1.0, 1.0, 1.0);
 
     player.mesh = group;
+    player.wings = wings;  // Store reference for animation
+    player.leftEngine = leftGlow;  // Store reference for glow animation
+    player.rightEngine = rightGlow;  // Store reference for glow animation
     player.mesh.castShadow = true;
     player.mesh.receiveShadow = true;
     scene.add(player.mesh);
@@ -307,6 +361,7 @@ let bullets = [];
 let enemies = [];
 let particles = [];
 let enemyLights = [];
+let engineParticles = [];
 
 // Keys
 const keys = {};
@@ -549,6 +604,110 @@ directionalLight.shadow.mapSize.width = 1024;
 directionalLight.shadow.mapSize.height = 1024;
 scene.add(directionalLight);
 
+// Camera Shake System
+function shakeCamera(intensity = 0.5) {
+    cameraShake.intensity = intensity;
+}
+
+function updateCameraShake() {
+    // Cinematic camera takes priority
+    if (cinematicCamera.active) {
+        updateCinematicCamera();
+        return;
+    }
+
+    if (cameraShake.intensity > 0.01) {
+        // Generate random shake offset
+        cameraShake.offsetX = (Math.random() - 0.5) * cameraShake.intensity;
+        cameraShake.offsetY = (Math.random() - 0.5) * cameraShake.intensity;
+        cameraShake.offsetZ = (Math.random() - 0.5) * cameraShake.intensity * 0.5;
+
+        // Apply shake to camera
+        camera.position.set(
+            baseCameraPosition.x + cameraShake.offsetX,
+            baseCameraPosition.y + cameraShake.offsetY,
+            baseCameraPosition.z + cameraShake.offsetZ
+        );
+        camera.lookAt(
+            baseCameraLookAt.x + cameraShake.offsetX * 0.5,
+            baseCameraLookAt.y + cameraShake.offsetY * 0.5,
+            baseCameraLookAt.z
+        );
+
+        // Decay shake intensity
+        cameraShake.intensity *= cameraShake.decay;
+    } else {
+        // Reset to base position when shake is minimal
+        if (cameraShake.intensity > 0) {
+            camera.position.set(baseCameraPosition.x, baseCameraPosition.y, baseCameraPosition.z);
+            camera.lookAt(baseCameraLookAt.x, baseCameraLookAt.y, baseCameraLookAt.z);
+            cameraShake.intensity = 0;
+        }
+    }
+}
+
+function startCinematicCamera(type, target) {
+    cinematicCamera.active = true;
+    cinematicCamera.type = type;
+    cinematicCamera.progress = 0;
+    cinematicCamera.startPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+
+    if (type === 'boss_defeat') {
+        cinematicCamera.duration = 90;  // 1.5 seconds at 60fps
+        cinematicCamera.lookAtTarget = { x: target.x, y: target.y, z: target.z };
+    } else if (type === 'portal_zoom') {
+        cinematicCamera.duration = 60;  // 1 second
+        cinematicCamera.targetPos = { x: 0, y: -2, z: 40 };  // Closer to portal
+        cinematicCamera.lookAtTarget = { x: 0, y: -5, z: 50 };
+    }
+}
+
+function updateCinematicCamera() {
+    if (!cinematicCamera.active) return;
+
+    cinematicCamera.progress++;
+    const t = cinematicCamera.progress / cinematicCamera.duration;
+    const eased = easeInOutQuad(t);
+
+    if (cinematicCamera.type === 'boss_defeat') {
+        // Orbit around explosion point
+        const angle = t * Math.PI * 0.5;  // 90 degree orbit
+        const radius = 25;
+        const height = 10 + Math.sin(t * Math.PI) * 5;  // Wave up and down
+
+        camera.position.set(
+            cinematicCamera.lookAtTarget.x + Math.cos(angle) * radius,
+            cinematicCamera.lookAtTarget.y + height,
+            cinematicCamera.lookAtTarget.z - Math.sin(angle) * radius
+        );
+        camera.lookAt(
+            cinematicCamera.lookAtTarget.x,
+            cinematicCamera.lookAtTarget.y,
+            cinematicCamera.lookAtTarget.z
+        );
+    } else if (cinematicCamera.type === 'portal_zoom') {
+        // Zoom toward portal
+        camera.position.set(
+            lerp(cinematicCamera.startPos.x, cinematicCamera.targetPos.x, eased),
+            lerp(cinematicCamera.startPos.y, cinematicCamera.targetPos.y, eased),
+            lerp(cinematicCamera.startPos.z, cinematicCamera.targetPos.z, eased)
+        );
+        camera.lookAt(
+            cinematicCamera.lookAtTarget.x,
+            cinematicCamera.lookAtTarget.y,
+            cinematicCamera.lookAtTarget.z
+        );
+    }
+
+    // End cinematic
+    if (cinematicCamera.progress >= cinematicCamera.duration) {
+        cinematicCamera.active = false;
+        // Reset camera to base position
+        camera.position.set(baseCameraPosition.x, baseCameraPosition.y, baseCameraPosition.z);
+        camera.lookAt(baseCameraLookAt.x, baseCameraLookAt.y, baseCameraLookAt.z);
+    }
+}
+
 // Move Player
 function movePlayer() {
     // Horizontal movement
@@ -583,7 +742,38 @@ function movePlayer() {
 
     if (player.mesh) {
         player.mesh.position.set(player.x, player.y, player.z);
-        player.mesh.rotation.z = -player.velocityX * 0.5;
+
+        // Smooth eased rotation based on velocity
+        const targetRotation = -player.velocityX * 0.8;  // Increased for more dramatic tilt
+        player.mesh.rotation.z = lerp(player.mesh.rotation.z, targetRotation, 0.15);  // Smooth interpolation
+
+        // Wing tilt animation - wings tilt opposite to ship rotation
+        if (player.wings) {
+            const wingTilt = player.velocityX * 0.3;
+            player.wings.rotation.x = lerp(player.wings.rotation.x, wingTilt, 0.1);
+        }
+
+        // Engine glow intensity based on movement
+        if (player.leftEngine && player.rightEngine) {
+            const movementIntensity = Math.abs(player.velocityX) / player.maxSpeed;
+            const baseIntensity = 0.8;
+            const activeIntensity = baseIntensity + movementIntensity * 0.4;
+
+            // Pulse slightly for life
+            const pulse = Math.sin(Date.now() * 0.01) * 0.1 + 1;
+
+            if (player.leftEngine.material && player.leftEngine.material.emissiveIntensity !== undefined) {
+                player.leftEngine.material.emissiveIntensity = activeIntensity * pulse;
+            }
+            if (player.rightEngine.material && player.rightEngine.material.emissiveIntensity !== undefined) {
+                player.rightEngine.material.emissiveIntensity = activeIntensity * pulse;
+            }
+
+            // Scale engines slightly based on movement
+            const engineScale = 1 + movementIntensity * 0.2;
+            player.leftEngine.scale.set(engineScale, engineScale, engineScale);
+            player.rightEngine.scale.set(engineScale, engineScale, engineScale);
+        }
     }
 }
 
@@ -806,8 +996,14 @@ function checkBossCollision() {
 function defeatBoss() {
     if (!boss) return;
 
+    const bossPos = boss.mesh.position.clone();  // Save position before removal
+
     playExplosionSound();
     playLevelCompleteSound();
+    shakeCamera(1.5);  // Big shake for boss explosion!
+
+    // Start cinematic camera orbit around explosion
+    startCinematicCamera('boss_defeat', bossPos);
 
     // Massive explosion
     for (let i = 0; i < 100; i++) {
@@ -1133,10 +1329,14 @@ function createEnemy(type) {
         });
         const ring1 = new THREE.Mesh(ringGeometry, ringMaterial);
         ring1.rotation.x = Math.PI / 2;
+        ring1.userData.isRing = true;  // Mark for animation
+        ring1.userData.rotationSpeed = 0.03;
         group.add(ring1);
 
         const ring2 = new THREE.Mesh(ringGeometry, ringMaterial);
         ring2.rotation.y = Math.PI / 2;
+        ring2.userData.isRing = true;  // Mark for animation
+        ring2.userData.rotationSpeed = -0.02;  // Opposite direction
         group.add(ring2);
 
         // Glowing core sphere
@@ -1147,6 +1347,7 @@ function createEnemy(type) {
             opacity: 0.9
         });
         const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+        glow.userData.isPulse = true;  // Mark for pulsing animation
         group.add(glow);
 
         group.scale.set(0.6, 0.6, 0.6);
@@ -1180,11 +1381,15 @@ function createEnemy(type) {
         const leftWing = new THREE.Mesh(wingGeometry, wingMaterial);
         leftWing.rotation.z = Math.PI / 2;
         leftWing.position.set(-1.5, 0, 0);
+        leftWing.userData.isWing = true;  // Mark for flap animation
+        leftWing.userData.flapSpeed = 0.05;
         group.add(leftWing);
 
         const rightWing = new THREE.Mesh(wingGeometry, wingMaterial);
         rightWing.rotation.z = -Math.PI / 2;
         rightWing.position.set(1.5, 0, 0);
+        rightWing.userData.isWing = true;  // Mark for flap animation
+        rightWing.userData.flapSpeed = 0.05;
         group.add(rightWing);
 
         // Engine cores
@@ -1196,8 +1401,10 @@ function createEnemy(type) {
         });
         const leftEngine = new THREE.Mesh(engineGeometry, engineMaterial);
         leftEngine.position.set(-0.6, 0, -1);
+        leftEngine.userData.isPulse = true;  // Mark for pulsing
         const rightEngine = new THREE.Mesh(engineGeometry, engineMaterial);
         rightEngine.position.set(0.6, 0, -1);
+        rightEngine.userData.isPulse = true;  // Mark for pulsing
         group.add(leftEngine, rightEngine);
 
         group.scale.set(0.6, 0.6, 0.6);
@@ -1245,6 +1452,9 @@ function createEnemy(type) {
             const weapon = new THREE.Mesh(weaponGeometry, weaponMaterial);
             const angle = (i / 4) * Math.PI * 2;
             weapon.position.set(Math.cos(angle) * 2, -0.5, Math.sin(angle) * 2);
+            weapon.userData.isWeapon = true;  // Mark for rotation animation
+            weapon.userData.weaponAngle = angle;
+            weapon.userData.rotationSpeed = 0.02;
             group.add(weapon);
         }
 
@@ -1257,6 +1467,7 @@ function createEnemy(type) {
         });
         const reactor = new THREE.Mesh(reactorGeometry, reactorMaterial);
         reactor.position.y = -0.3;
+        reactor.userData.isPulse = true;  // Mark for pulsing
         group.add(reactor);
 
         group.scale.set(0.5, 0.5, 0.5);
@@ -1271,7 +1482,9 @@ function createEnemy(type) {
         type: type,
         box: new THREE.Box3(),
         lateralSpeed: (Math.random() - 0.5) * 0.25 * levelMultiplier,
-        lateralDirection: Math.random() < 0.5 ? -1 : 1  // Initial direction
+        lateralDirection: Math.random() < 0.5 ? -1 : 1,  // Initial direction
+        waveOffset: Math.random() * Math.PI * 2,  // Random starting point in wave
+        waveAmplitude: 0.5 + Math.random() * 1.0  // Wave intensity
     };
 
     const x = (Math.random() - 0.5) * 30;
@@ -1293,23 +1506,97 @@ function createEnemy(type) {
     enemies.push(enemy);
 }
 
+// Procedural animations for enemy parts
+function animateEnemyParts(enemy) {
+    enemy.mesh.traverse((child) => {
+        // Rotate rings (Type 0 - Destroyer)
+        if (child.userData.isRing) {
+            child.rotation.z += child.userData.rotationSpeed;
+        }
+
+        // Pulse glowing parts (all types)
+        if (child.userData.isPulse) {
+            const pulse = Math.sin(Date.now() * 0.005) * 0.15 + 1;
+            child.scale.set(pulse, pulse, pulse);
+        }
+
+        // Flap wings (Type 1 - Interceptor)
+        if (child.userData.isWing) {
+            const flap = Math.sin(Date.now() * child.userData.flapSpeed) * 0.2;
+            child.rotation.y = flap;
+        }
+
+        // Rotate weapon arrays (Type 2 - Battlecruiser)
+        if (child.userData.isWeapon) {
+            child.userData.weaponAngle += child.userData.rotationSpeed;
+            child.position.set(
+                Math.cos(child.userData.weaponAngle) * 2,
+                -0.5,
+                Math.sin(child.userData.weaponAngle) * 2
+            );
+        }
+    });
+}
+
 function updateEnemies() {
     for (let i = enemies.length - 1; i >= 0; i--) {
         const enemy = enemies[i];
 
-        // Forward movement
-        enemy.mesh.position.z -= enemy.speed;
+        // Handle death animation
+        if (enemy.dying) {
+            enemy.deathTimer--;
 
-        // Lateral (sideways) movement with direction changes at boundaries
-        enemy.mesh.position.x += enemy.lateralSpeed * enemy.lateralDirection;
+            // Spin out of control
+            enemy.mesh.rotation.x += enemy.deathSpin.x;
+            enemy.mesh.rotation.y += enemy.deathSpin.y;
+            enemy.mesh.rotation.z += enemy.deathSpin.z;
 
-        // Reverse direction if hitting boundaries
-        if (enemy.mesh.position.x > 30 || enemy.mesh.position.x < -30) {
-            enemy.lateralDirection *= -1;
+            // Continue moving forward but veer off
+            enemy.mesh.position.z -= enemy.speed * 0.5;
+            enemy.mesh.position.x += enemy.deathSpin.x * 2;
+            enemy.mesh.position.y += enemy.deathSpin.y * 2;
+
+            // Fade out and shrink
+            enemy.mesh.traverse((child) => {
+                if (child.material) {
+                    child.material.opacity = enemy.deathTimer / 20;
+                    child.material.transparent = true;
+                }
+            });
+            enemy.mesh.scale.multiplyScalar(0.97);
+
+            if (enemy.deathTimer <= 0) {
+                scene.remove(enemy.mesh);
+                enemies.splice(i, 1);
+            }
+            continue;
         }
 
-        // Rotation for visual effect
+        // Normal movement
+        enemy.mesh.position.z -= enemy.speed;
+
+        // Smooth sine-wave lateral movement (more organic feel)
+        enemy.waveOffset += 0.05;
+        const waveX = Math.sin(enemy.waveOffset) * enemy.waveAmplitude;
+        enemy.mesh.position.x += waveX * enemy.lateralSpeed;
+
+        // Lateral boundary checking
+        if (enemy.mesh.position.x > 30) {
+            enemy.mesh.position.x = 30;
+            enemy.waveOffset = Math.PI;  // Reset wave to move back
+        }
+        if (enemy.mesh.position.x < -30) {
+            enemy.mesh.position.x = -30;
+            enemy.waveOffset = 0;  // Reset wave to move forward
+        }
+
+        // Smooth rotation for visual effect
         enemy.mesh.rotation.y += 0.02;
+        enemy.mesh.rotation.z = Math.sin(enemy.waveOffset) * 0.1;  // Slight roll with wave
+
+        // Animate enemy parts (rings, wings, weapons)
+        animateEnemyParts(enemy);
+
         enemy.box.setFromObject(enemy.mesh);
 
         if (enemy.mesh.position.z < -20) {
@@ -1347,9 +1634,17 @@ function checkCollisions() {
             if (dy < yTolerance && dx < xHitRadius) {
                 createExplosion(enemyPos.x, enemyPos.y, enemyPos.z);
                 scene.remove(bullet.mesh);
-                scene.remove(enemy.mesh);
                 bullets.splice(bIndex, 1);
-                enemies.splice(eIndex, 1);
+
+                // Start death animation instead of immediate removal
+                enemy.dying = true;
+                enemy.deathTimer = 20;  // Spin out over 20 frames
+                enemy.deathSpin = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.3,
+                    (Math.random() - 0.5) * 0.3,
+                    (Math.random() - 0.5) * 0.3
+                );
+
                 score += difficultySettings[difficulty].enemyPoints * currentLevel;  // More points at higher levels
                 updateScore();
 
@@ -1394,21 +1689,61 @@ function checkCollisions() {
 // Particles
 function createExplosion(x, y, z) {
     playExplosionSound();  // Play sound effect
+    shakeCamera(0.3);  // Small shake for regular explosions
 
-    for (let i = 0; i < 25; i++) {
-        const geometry = new THREE.SphereGeometry(0.2, 6, 6);
+    // Flash effect - bright sphere that fades quickly
+    const flashGeometry = new THREE.SphereGeometry(2, 16, 16);
+    const flashMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffff00,
+        transparent: true,
+        opacity: 1.0
+    });
+    const flashMesh = new THREE.Mesh(flashGeometry, flashMaterial);
+    flashMesh.position.set(x, y, z);
+    scene.add(flashMesh);
+    particles.push({
+        mesh: flashMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 8,
+        isFlash: true
+    });
+
+    // Shockwave ring - expanding ring
+    const ringGeometry = new THREE.TorusGeometry(0.5, 0.1, 8, 16);
+    const ringMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff6600,
+        transparent: true,
+        opacity: 0.8
+    });
+    const ringMesh = new THREE.Mesh(ringGeometry, ringMaterial);
+    ringMesh.position.set(x, y, z);
+    ringMesh.rotation.x = Math.PI / 2;
+    scene.add(ringMesh);
+    particles.push({
+        mesh: ringMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 15,
+        isShockwave: true,
+        expandRate: 0.5
+    });
+
+    // Main explosion particles - varied sizes and speeds
+    for (let i = 0; i < 30; i++) {
+        const size = 0.15 + Math.random() * 0.25;  // Varied sizes
+        const geometry = new THREE.SphereGeometry(size, 6, 6);
         const material = new THREE.MeshBasicMaterial({
             color: Math.random() > 0.5 ? 0xff6600 : 0xffff00
         });
         const particleMesh = new THREE.Mesh(geometry, material);
         particleMesh.position.set(x, y, z);
 
+        const speed = 0.3 + Math.random() * 0.7;  // Varied speeds
         const particle = {
             mesh: particleMesh,
             velocity: new THREE.Vector3(
-                (Math.random() - 0.5) * 1.0,
-                (Math.random() - 0.5) * 1.0,
-                (Math.random() - 0.5) * 1.0
+                (Math.random() - 0.5) * speed * 2,
+                (Math.random() - 0.5) * speed * 2,
+                (Math.random() - 0.5) * speed * 2
             ),
             life: 35
         };
@@ -1421,6 +1756,34 @@ function createExplosion(x, y, z) {
 function updateParticles() {
     for (let i = particles.length - 1; i >= 0; i--) {
         const particle = particles[i];
+
+        // Handle flash effect
+        if (particle.isFlash) {
+            particle.life--;
+            particle.mesh.material.opacity = particle.life / 8;
+            particle.mesh.scale.multiplyScalar(1.2);  // Expand quickly
+
+            if (particle.life <= 0) {
+                scene.remove(particle.mesh);
+                particles.splice(i, 1);
+            }
+            continue;
+        }
+
+        // Handle shockwave ring
+        if (particle.isShockwave) {
+            particle.life--;
+            particle.mesh.scale.multiplyScalar(1 + particle.expandRate);  // Expand outward
+            particle.mesh.material.opacity = particle.life / 15;
+
+            if (particle.life <= 0) {
+                scene.remove(particle.mesh);
+                particles.splice(i, 1);
+            }
+            continue;
+        }
+
+        // Regular particle behavior
         particle.mesh.position.add(particle.velocity);
         particle.life--;
 
@@ -1431,6 +1794,64 @@ function updateParticles() {
         if (particle.life <= 0) {
             scene.remove(particle.mesh);
             particles.splice(i, 1);
+        }
+    }
+}
+
+// Engine Particle Trail System
+function createEngineParticles() {
+    if (!player.mesh || !gameRunning || gamePaused || portalAnimating) return;
+
+    // Create particles from both engines
+    const enginePositions = [
+        { x: -1.2, y: 0, z: -3 },  // Left engine
+        { x: 1.2, y: 0, z: -3 }    // Right engine
+    ];
+
+    enginePositions.forEach(offset => {
+        const geometry = new THREE.SphereGeometry(0.15, 6, 6);
+        const material = new THREE.MeshBasicMaterial({
+            color: Math.random() > 0.3 ? 0xff6600 : 0xffaa00,  // Orange/yellow mix
+            transparent: true,
+            opacity: 0.8
+        });
+        const particleMesh = new THREE.Mesh(geometry, material);
+
+        // Position at engine location (in world space)
+        particleMesh.position.set(
+            player.x + offset.x,
+            player.y + offset.y,
+            player.z + offset.z
+        );
+
+        const particle = {
+            mesh: particleMesh,
+            velocity: new THREE.Vector3(
+                (Math.random() - 0.5) * 0.1,  // Small random spread
+                (Math.random() - 0.5) * 0.1,
+                -0.4  // Move backward (away from ship)
+            ),
+            life: 12  // Short-lived (about 200ms at 60fps)
+        };
+
+        scene.add(particleMesh);
+        engineParticles.push(particle);
+    });
+}
+
+function updateEngineParticles() {
+    for (let i = engineParticles.length - 1; i >= 0; i--) {
+        const particle = engineParticles[i];
+        particle.mesh.position.add(particle.velocity);
+        particle.life--;
+
+        // Fade out and shrink
+        particle.mesh.material.opacity = particle.life / 12;
+        particle.mesh.scale.multiplyScalar(0.95);
+
+        if (particle.life <= 0) {
+            scene.remove(particle.mesh);
+            engineParticles.splice(i, 1);
         }
     }
 }
@@ -1863,9 +2284,11 @@ function startGame() {
     bullets.forEach(b => scene.remove(b.mesh));
     enemies.forEach(e => scene.remove(e.mesh));
     particles.forEach(p => scene.remove(p.mesh));
+    engineParticles.forEach(p => scene.remove(p.mesh));
     bullets = [];
     enemies = [];
     particles = [];
+    engineParticles = [];
     enemyLights = [];
 
     // Clean up portal if exists
@@ -1930,13 +2353,14 @@ function startGame() {
 
 // Game Loop
 let lastEnemySpawn = 0;
+let engineParticleCounter = 0;  // Throttle engine particle creation
 
 function gameLoop(timestamp = 0) {
     if (!gameRunning) return;
 
     // If paused, only render (don't update game state)
     if (gamePaused) {
-        renderer.render(scene, camera);
+        composer.render();
         animationId = requestAnimationFrame(gameLoop);
         return;
     }
@@ -1946,12 +2370,21 @@ function gameLoop(timestamp = 0) {
         movePlayer();
         updateBullets();
         updateEnemies();
+
+        // Create engine particles every 2 frames (30 per second at 60fps)
+        engineParticleCounter++;
+        if (engineParticleCounter >= 2) {
+            createEngineParticles();
+            engineParticleCounter = 0;
+        }
     }
 
     updateParticles();
+    updateEngineParticles();
     starField.update();
     backgroundManager.update();
     updatePortal();
+    updateCameraShake();
 
     if (bossActive) {
         updateBoss();
@@ -1976,7 +2409,7 @@ function gameLoop(timestamp = 0) {
         }
     }
 
-    renderer.render(scene, camera);
+    composer.render();
     animationId = requestAnimationFrame(gameLoop);
 }
 
@@ -1985,7 +2418,7 @@ function menuAnimation() {
     if (gameRunning) return;
 
     starField.update();
-    renderer.render(scene, camera);
+    composer.render();
     requestAnimationFrame(menuAnimation);
 }
 
@@ -1994,6 +2427,7 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
 });
 
 // Initialize high score display on page load
