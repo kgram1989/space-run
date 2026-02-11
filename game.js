@@ -8,6 +8,7 @@ const bossHealthBar = document.getElementById('bossHealthBar');
 const bossHealthFill = document.getElementById('bossHealthFill');
 const gameOverScreen = document.getElementById('gameOver');
 const startScreen = document.getElementById('startScreen');
+const pauseScreen = document.getElementById('pauseScreen');
 const finalScoreElement = document.getElementById('finalScore');
 const gameDifficultyElement = document.getElementById('gameDifficulty');
 const restartBtn = document.getElementById('restartBtn');
@@ -31,6 +32,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 let gameRunning = false;
+let gamePaused = false;
 let score = 0;
 let lives = 3;
 let animationId;
@@ -42,6 +44,8 @@ let enemiesRequiredForBoss = 10;  // Enemies needed to trigger boss
 let bossActive = false;
 let boss = null;
 let levelTransitioning = false;  // Prevent spawning during level transition
+let portal = null;
+let portalAnimating = false;
 
 // Difficulty settings
 const difficultySettings = {
@@ -72,6 +76,98 @@ const difficultySettings = {
         minSpawnInterval: 700,
         scalingFactor: 0.28   // Faster growth but diminishing
     }
+};
+
+// Story & Level Theme Data
+const GAME_NARRATIVE = {
+    mission: {
+        title: "OPERATION DEEP HORIZON",
+        briefing: `Year 2247. You've been selected to pilot the experimental fighter "Horizon" on a classified deep-space mission to the Andromeda Sector.
+
+Your cargo: [CLASSIFIED]
+Your destination: [REDACTED]
+Your orders: Reach the destination. Survive.
+
+Intel suggests heavy resistance across multiple star systems. Good luck, pilot.`
+    },
+
+    levels: [
+        {
+            id: 1,
+            systemName: "Sol Boundary",
+            description: "Departing Earth's solar system. Enemy scouts detected.",
+            theme: {
+                background: { color: 0x000011 },
+                planets: [
+                    { type: 'small', color: 0x4444ff, distance: 60, size: 2 },
+                    { type: 'small', color: 0x8888ff, distance: 50, size: 1.5 },
+                    { type: 'large', color: 0x6666aa, distance: 70, size: 2.5 }
+                ],
+                nebula: null,
+                starColor: 0xffffff
+            }
+        },
+        {
+            id: 2,
+            systemName: "Proxima Drift",
+            description: "First jump complete. Navigating asteroid debris field.",
+            theme: {
+                background: { color: 0x110011 },
+                planets: [
+                    { type: 'ringed', color: 0xffaa66, distance: 50, size: 4, ringColor: 0xccaa88 },
+                    { type: 'small', color: 0xff6699, distance: 65, size: 1.8 },
+                    { type: 'small', color: 0xaa44cc, distance: 55, size: 1.2 }
+                ],
+                nebula: { color: 0xff00ff, opacity: 0.15 },
+                starColor: 0xffffaa
+            }
+        },
+        {
+            id: 3,
+            systemName: "Crimson Expanse",
+            description: "Hostile territory. Red giant star system.",
+            theme: {
+                background: { color: 0x110000 },
+                planets: [
+                    { type: 'large', color: 0xff6600, distance: 70, size: 3 },
+                    { type: 'small', color: 0xff4400, distance: 55, size: 1.5 },
+                    { type: 'small', color: 0xcc3300, distance: 62, size: 1.0 }
+                ],
+                nebula: { color: 0xff0000, opacity: 0.12 },
+                starColor: 0xffaaaa
+            }
+        },
+        {
+            id: 4,
+            systemName: "Void Sector",
+            description: "Deep space. Long-range sensors compromised.",
+            theme: {
+                background: { color: 0x000000 },
+                planets: [
+                    { type: 'large', color: 0x666666, distance: 75, size: 3 },
+                    { type: 'small', color: 0x444444, distance: 60, size: 1.5 },
+                    { type: 'ringed', color: 0x555555, distance: 68, size: 2.5, ringColor: 0x777777 }
+                ],
+                nebula: null,
+                starColor: 0xaaaaff
+            }
+        },
+        {
+            id: 5,
+            systemName: "Andromeda Gate",
+            description: "Final approach. Destination ahead.",
+            theme: {
+                background: { color: 0x001122 },
+                planets: [
+                    { type: 'ringed', color: 0x00ffaa, distance: 45, size: 5, ringColor: 0x00ccaa },
+                    { type: 'large', color: 0x00ddbb, distance: 60, size: 3.5 },
+                    { type: 'small', color: 0x00aaff, distance: 55, size: 2 }
+                ],
+                nebula: { color: 0x00ffff, opacity: 0.2 },
+                starColor: 0xaaffff
+            }
+        }
+    ]
 };
 
 // Player
@@ -317,19 +413,84 @@ function playLevelCompleteSound() {
     oscillator.stop(audioContext.currentTime + 0.3);
 }
 
+function playPortalSound() {
+    // Create multiple oscillators for a rich portal/wormhole sound
+    const duration = 2.5;
+
+    // Low frequency rumble
+    const bass = audioContext.createOscillator();
+    const bassGain = audioContext.createGain();
+    bass.connect(bassGain);
+    bassGain.connect(audioContext.destination);
+    bass.frequency.setValueAtTime(50, audioContext.currentTime);
+    bass.frequency.exponentialRampToValueAtTime(30, audioContext.currentTime + duration);
+    bass.type = 'sine';
+    bassGain.gain.setValueAtTime(0.3, audioContext.currentTime);
+    bassGain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+
+    // Rising sweep
+    const sweep = audioContext.createOscillator();
+    const sweepGain = audioContext.createGain();
+    sweep.connect(sweepGain);
+    sweepGain.connect(audioContext.destination);
+    sweep.frequency.setValueAtTime(200, audioContext.currentTime);
+    sweep.frequency.exponentialRampToValueAtTime(2000, audioContext.currentTime + duration);
+    sweep.type = 'sawtooth';
+    sweepGain.gain.setValueAtTime(0.15, audioContext.currentTime);
+    sweepGain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+
+    // Warbling effect
+    const warble = audioContext.createOscillator();
+    const warbleGain = audioContext.createGain();
+    const lfo = audioContext.createOscillator();
+    const lfoGain = audioContext.createGain();
+
+    lfo.connect(lfoGain);
+    lfoGain.connect(warble.frequency);
+    warble.connect(warbleGain);
+    warbleGain.connect(audioContext.destination);
+
+    lfo.frequency.value = 6; // 6 Hz wobble
+    lfoGain.gain.value = 100;
+    warble.frequency.value = 800;
+    warble.type = 'triangle';
+    warbleGain.gain.setValueAtTime(0.1, audioContext.currentTime);
+    warbleGain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+
+    // Start all oscillators
+    bass.start(audioContext.currentTime);
+    bass.stop(audioContext.currentTime + duration);
+    sweep.start(audioContext.currentTime);
+    sweep.stop(audioContext.currentTime + duration);
+    warble.start(audioContext.currentTime);
+    warble.stop(audioContext.currentTime + duration);
+    lfo.start(audioContext.currentTime);
+    lfo.stop(audioContext.currentTime + duration);
+}
+
 // Event Listeners
 document.addEventListener('keydown', (e) => {
     keys[e.key] = true;
 
-    if (e.key === ' ' && gameRunning) {
+    if (e.key === ' ' && gameRunning && !gamePaused) {
         e.preventDefault();
         shootBullet();
     }
 
-    // ESC key to exit game
+    // P key to toggle pause
+    if ((e.key === 'p' || e.key === 'P') && gameRunning) {
+        e.preventDefault();
+        togglePause();
+    }
+
+    // ESC key to exit game (or unpause if paused)
     if (e.key === 'Escape' && gameRunning) {
         e.preventDefault();
-        endGame();
+        if (gamePaused) {
+            togglePause(); // Unpause with ESC
+        } else {
+            endGame();
+        }
     }
 });
 
@@ -656,20 +817,174 @@ function defeatBoss() {
     score += levelBonus;
     updateScore();
 
-    // Advance to next level
+    // Create portal and animate player entering it
     setTimeout(() => {
-        nextLevel();
-    }, 2000);
+        createPortal();
+        animatePortalEntry();
+    }, 1500);
+}
+
+// Create Portal/Wormhole
+function createPortal() {
+    playPortalSound(); // Play portal sound effect
+    const portalGroup = new THREE.Group();
+
+    // Create multiple rotating rings for wormhole effect
+    for (let i = 0; i < 5; i++) {
+        const ringGeometry = new THREE.TorusGeometry(6 + i * 0.5, 0.4, 16, 32);
+        const ringMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ffff,
+            transparent: true,
+            opacity: 0.7 - i * 0.1,
+            emissive: 0x00ffff,
+            emissiveIntensity: 1
+        });
+        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+        ring.userData.rotationSpeed = (i + 1) * 0.02;
+        portalGroup.add(ring);
+    }
+
+    // Central glow sphere
+    const glowGeometry = new THREE.SphereGeometry(3, 32, 32);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0x0088ff,
+        transparent: true,
+        opacity: 0.3
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    portalGroup.add(glow);
+
+    // Portal particles
+    for (let i = 0; i < 30; i++) {
+        const particleGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+        const particleMaterial = new THREE.MeshBasicMaterial({
+            color: Math.random() > 0.5 ? 0x00ffff : 0x0088ff,
+            transparent: true,
+            opacity: 0.8
+        });
+        const particleMesh = new THREE.Mesh(particleGeometry, particleMaterial);
+
+        const angle = (i / 30) * Math.PI * 2;
+        const radius = 4 + Math.random() * 3;
+        particleMesh.position.set(
+            Math.cos(angle) * radius,
+            (Math.random() - 0.5) * 2,
+            Math.sin(angle) * radius
+        );
+
+        particleMesh.userData.angle = angle;
+        particleMesh.userData.radius = radius;
+        particleMesh.userData.speed = 0.02 + Math.random() * 0.02;
+
+        portalGroup.add(particleMesh);
+    }
+
+    // Position portal ahead of player
+    portalGroup.position.set(0, -5, 50);
+
+    // Add point light for glow effect
+    const portalLight = new THREE.PointLight(0x00ffff, 5, 30);
+    portalGroup.add(portalLight);
+
+    scene.add(portalGroup);
+    portal = portalGroup;
+}
+
+function updatePortal() {
+    if (!portal) return;
+
+    // Rotate rings in different directions
+    portal.children.forEach((child) => {
+        if (child.userData.rotationSpeed) {
+            child.rotation.z += child.userData.rotationSpeed;
+            child.rotation.x = Math.sin(Date.now() * 0.001) * 0.2;
+        }
+
+        // Animate particles in spiral
+        if (child.userData.angle !== undefined) {
+            child.userData.angle += child.userData.speed;
+            child.position.x = Math.cos(child.userData.angle) * child.userData.radius;
+            child.position.z = Math.sin(child.userData.angle) * child.userData.radius;
+        }
+    });
+
+    // Pulse the glow
+    if (portal.children[5]) { // Central glow sphere
+        const scale = 1 + Math.sin(Date.now() * 0.003) * 0.1;
+        portal.children[5].scale.set(scale, scale, scale);
+    }
+}
+
+function animatePortalEntry() {
+    if (!player.mesh || !portal) return;
+
+    portalAnimating = true;
+    const startX = player.x;
+    const startY = player.y;
+    const startZ = player.z;
+    const targetX = portal.position.x; // 0 (center)
+    const targetY = portal.position.y; // -5 (center)
+    const targetZ = portal.position.z; // 50
+    const duration = 2000; // 2 seconds
+    const startTime = Date.now();
+
+    const animate = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        // Ease-in curve for acceleration
+        const eased = progress * progress;
+
+        // Move player toward portal center (animate X, Y, and Z)
+        player.x = startX + (targetX - startX) * eased;
+        player.y = startY + (targetY - startY) * eased;
+        player.z = startZ + (targetZ - startZ) * eased;
+        player.mesh.position.set(player.x, player.y, player.z);
+
+        // Rotate player as it enters portal
+        player.mesh.rotation.y += 0.05;
+        player.mesh.rotation.z = Math.sin(progress * Math.PI * 2) * 0.3;
+
+        // Scale down player as it enters
+        const scale = 1 - progress * 0.5;
+        player.mesh.scale.set(scale, scale, scale);
+
+        if (progress < 1) {
+            requestAnimationFrame(animate);
+        } else {
+            // Entry complete, transition to next level
+            portalAnimating = false;
+            if (portal) {
+                scene.remove(portal);
+                portal = null;
+            }
+            // Reset player position, scale, and rotation
+            player.z = 0;
+            player.y = -5;
+            player.x = 0;
+            player.velocityX = 0;
+            player.mesh.position.set(player.x, player.y, player.z);
+            player.mesh.scale.set(1, 1, 1);
+            player.mesh.rotation.y = 0;
+            player.mesh.rotation.z = 0;
+            nextLevel();
+        }
+    };
+
+    animate();
 }
 
 function nextLevel() {
     currentLevel++;
     enemiesDefeatedThisLevel = 0;
     enemiesRequiredForBoss = 10 + (currentLevel * 2);  // More enemies each level
-    levelTransitioning = false;  // Allow boss spawning again
+    levelTransitioning = true;  // Keep transition active during level message
     lastEnemySpawn = 0;  // Reset spawn timer to spawn enemies immediately
 
     updateLevel();
+
+    // Load new level theme
+    backgroundManager.loadLevelTheme(currentLevel);
 
     // Bonus life every 3 levels
     if (currentLevel % 3 === 0 && lives < 3) {
@@ -678,29 +993,47 @@ function nextLevel() {
     }
 
     // Show level message
-    showLevelMessage(`Level ${currentLevel}`);
+    showLevelMessage(currentLevel);
+
+    // Allow enemy spawning after level message disappears (3 seconds: 2.5s display + 0.5s fade)
+    setTimeout(() => {
+        levelTransitioning = false;
+    }, 3000);
 }
 
-function showLevelMessage(message) {
+function showLevelMessage(levelNumber) {
+    const levelData = GAME_NARRATIVE.levels[levelNumber - 1];
+    if (!levelData) {
+        // Fallback for levels beyond defined data
+        showMessageBox(`Level ${levelNumber}`, 'Entering unknown space...');
+        return;
+    }
+
+    showMessageBox(levelData.systemName, levelData.description);
+}
+
+function showMessageBox(title, subtitle) {
     const messageDiv = document.createElement('div');
+    messageDiv.className = 'level-message-box';
+
+    messageDiv.innerHTML = `
+        <div class="level-title">${title}</div>
+        <div class="level-subtitle">${subtitle}</div>
+    `;
+
     messageDiv.style.position = 'absolute';
     messageDiv.style.top = '50%';
     messageDiv.style.left = '50%';
     messageDiv.style.transform = 'translate(-50%, -50%)';
-    messageDiv.style.fontSize = '4em';
-    messageDiv.style.fontWeight = '900';
-    messageDiv.style.color = '#00ffff';
-    messageDiv.style.textShadow = '0 0 20px rgba(0, 255, 255, 1), 0 0 40px rgba(0, 255, 255, 0.6)';
     messageDiv.style.zIndex = '100';
-    messageDiv.style.letterSpacing = '5px';
-    messageDiv.textContent = message;
     messageDiv.style.animation = 'modalFadeIn 0.5s ease-out';
 
     document.querySelector('.game-container').appendChild(messageDiv);
 
     setTimeout(() => {
-        messageDiv.remove();
-    }, 2000);
+        messageDiv.style.animation = 'modalFadeOut 0.5s ease-out';
+        setTimeout(() => messageDiv.remove(), 500);
+    }, 2500);
 }
 
 // Enemies
@@ -1082,6 +1415,236 @@ function createStars() {
 
 const starField = createStars();
 
+// Background Object Manager for level-specific visuals
+class BackgroundObjectManager {
+    constructor(scene) {
+        this.scene = scene;
+        this.planets = [];
+        this.nebulaGroup = null;
+    }
+
+    loadLevelTheme(levelNumber) {
+        // Clear existing background objects
+        this.clearObjects();
+
+        // Get level theme data
+        const levelData = GAME_NARRATIVE.levels[levelNumber - 1];
+        if (!levelData) {
+            // Fallback for levels beyond defined data - reuse last theme
+            const lastLevel = GAME_NARRATIVE.levels[GAME_NARRATIVE.levels.length - 1];
+            if (lastLevel && lastLevel.theme) {
+                this.applyTheme(lastLevel.theme);
+            }
+            return;
+        }
+
+        this.applyTheme(levelData.theme);
+    }
+
+    applyTheme(theme) {
+        // Update scene background and fog
+        this.scene.background = new THREE.Color(theme.background.color);
+        this.scene.fog.color = new THREE.Color(theme.background.color);
+
+        // Create planets if defined
+        if (theme.planets && theme.planets.length > 0) {
+            // Adjust instance count based on how many planet types are defined
+            const planetTypeCount = theme.planets.length;
+            const instancesPerPlanet = planetTypeCount === 1 ? 2 : 1; // Less instances if multiple planet types
+
+            theme.planets.forEach(planetData => {
+                this.createPlanet(planetData, instancesPerPlanet);
+            });
+        }
+
+        // Create nebula if defined
+        if (theme.nebula) {
+            this.createNebula(theme.nebula);
+        }
+    }
+
+    createPlanet(planetData, instancesPerPlanet = 2) {
+        // Create specified number of instances at staggered distances
+        for (let instance = 0; instance < instancesPerPlanet; instance++) {
+            let planetMesh;
+
+            if (planetData.type === 'ringed') {
+                // Create planet with ring
+                const group = new THREE.Group();
+
+                // Main planet sphere
+                const sphereGeometry = new THREE.SphereGeometry(planetData.size, 32, 32);
+                const sphereMaterial = new THREE.MeshStandardMaterial({
+                    color: planetData.color,
+                    emissive: planetData.color,
+                    emissiveIntensity: 0.2,
+                    metalness: 0.4,
+                    roughness: 0.7
+                });
+                const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+                group.add(sphere);
+
+                // Ring
+                const ringGeometry = new THREE.TorusGeometry(planetData.size * 1.8, planetData.size * 0.3, 2, 48);
+                const ringMaterial = new THREE.MeshStandardMaterial({
+                    color: planetData.ringColor || 0xcccccc,
+                    emissive: planetData.ringColor || 0xcccccc,
+                    emissiveIntensity: 0.1,
+                    metalness: 0.6,
+                    roughness: 0.5,
+                    transparent: true,
+                    opacity: 0.7
+                });
+                const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+                ring.rotation.x = Math.PI / 2.5; // Tilt the ring
+                group.add(ring);
+
+                planetMesh = group;
+            } else {
+                // Simple planet (small or large)
+                const geometry = new THREE.SphereGeometry(planetData.size, 32, 32);
+                const material = new THREE.MeshStandardMaterial({
+                    color: planetData.color,
+                    emissive: planetData.color,
+                    emissiveIntensity: 0.2,
+                    metalness: 0.4,
+                    roughness: 0.7
+                });
+                planetMesh = new THREE.Mesh(geometry, material);
+            }
+
+            // Stagger distances: spread instances across depth range
+            const baseDistance = planetData.distance;
+            const depthSpacing = 40; // Space between instances
+            const instanceDistance = baseDistance + (instance * depthSpacing);
+
+            // Position planet further to the sides and higher up (out of gameplay area)
+            const side = Math.random() < 0.5 ? -1 : 1; // Choose left or right side
+            const randomX = side * (40 + Math.random() * 30); // Range: ±40 to ±70 (far from center)
+            const randomY = -2 + Math.random() * 30; // Range: -2 to 28 (higher up, out of gameplay)
+            planetMesh.position.set(randomX, randomY, instanceDistance + 20); // Extra 20 units back
+
+            // Set render order to appear behind game objects
+            planetMesh.renderOrder = -2;
+
+            // Add to scene
+            this.scene.add(planetMesh);
+
+            // Store in planets array with parallax speed and original data for respawning
+            const speed = 0.08 + Math.random() * 0.07; // Speed range: 0.08-0.15
+            this.planets.push({
+                mesh: planetMesh,
+                speed: speed,
+                rotationSpeed: (Math.random() - 0.5) * 0.01,
+                templateData: planetData // Store for respawning
+            });
+        }
+    }
+
+    createNebula(nebulaData) {
+        this.nebulaGroup = new THREE.Group();
+
+        // Create 3 overlapping semi-transparent spheres for distant nebula effect
+        for (let i = 0; i < 3; i++) {
+            const size = 15 + Math.random() * 10; // Smaller sizes: 15-25
+            const geometry = new THREE.SphereGeometry(size, 32, 32); // More segments for smoother look
+            const material = new THREE.MeshBasicMaterial({
+                color: nebulaData.color,
+                transparent: true,
+                opacity: 0.05 + Math.random() * 0.05, // Much lower opacity: 0.05-0.1
+                side: THREE.BackSide,
+                depthWrite: false,
+                fog: true
+            });
+            const cloud = new THREE.Mesh(geometry, material);
+
+            // Position much further back and more spread out
+            cloud.position.set(
+                (Math.random() - 0.5) * 80, // Wider spread: -40 to 40
+                (Math.random() - 0.5) * 50, // Taller spread: -25 to 25
+                100 + Math.random() * 60 // Much further back: z: 100-160
+            );
+
+            this.nebulaGroup.add(cloud);
+        }
+
+        // Set render order to appear furthest back
+        this.nebulaGroup.renderOrder = -3;
+
+        this.scene.add(this.nebulaGroup);
+    }
+
+    update() {
+        // Update planets - parallax scrolling with respawning
+        for (let i = this.planets.length - 1; i >= 0; i--) {
+            const planet = this.planets[i];
+
+            // Move planet forward (toward camera)
+            planet.mesh.position.z -= planet.speed;
+
+            // Apply slow rotation
+            if (planet.mesh.rotation) {
+                planet.mesh.rotation.y += planet.rotationSpeed;
+            }
+
+            // Respawn planet if it passes the camera (continuous loop)
+            if (planet.mesh.position.z < -30) {
+                // Reposition far back with new random x/y (keep in background)
+                const side = Math.random() < 0.5 ? -1 : 1; // Choose left or right side
+                const randomX = side * (40 + Math.random() * 30); // Range: ±40 to ±70
+                const randomY = -2 + Math.random() * 30; // Range: -2 to 28 (higher up)
+                const respawnDistance = 90 + Math.random() * 40; // Range: 90-130 (further back)
+                planet.mesh.position.set(randomX, randomY, respawnDistance);
+
+                // Add variety: randomize scale (85%-115% of original)
+                const scaleVariation = 0.85 + Math.random() * 0.3;
+                planet.mesh.scale.set(scaleVariation, scaleVariation, scaleVariation);
+
+                // Randomize rotation for variety
+                planet.mesh.rotation.set(
+                    Math.random() * Math.PI * 2,
+                    Math.random() * Math.PI * 2,
+                    Math.random() * Math.PI * 2
+                );
+            }
+        }
+
+        // Update nebula - very slow parallax
+        if (this.nebulaGroup) {
+            this.nebulaGroup.position.z -= 0.02; // Very slow movement
+
+            // Respawn nebula if it passes the camera
+            if (this.nebulaGroup.position.z < -50) {
+                // Reset to far distance instead of removing
+                this.nebulaGroup.position.z = 120 + Math.random() * 40; // Range: 120-160
+
+                // Randomize positions of individual clouds for variety
+                this.nebulaGroup.children.forEach(cloud => {
+                    cloud.position.x = (Math.random() - 0.5) * 80;
+                    cloud.position.y = (Math.random() - 0.5) * 50;
+                });
+            }
+        }
+    }
+
+    clearObjects() {
+        // Remove all planets
+        this.planets.forEach(planet => {
+            this.scene.remove(planet.mesh);
+        });
+        this.planets = [];
+
+        // Remove nebula
+        if (this.nebulaGroup) {
+            this.scene.remove(this.nebulaGroup);
+            this.nebulaGroup = null;
+        }
+    }
+}
+
+// Create background manager instance
+const backgroundManager = new BackgroundObjectManager(scene);
+
 // Lane indicators removed - better options below
 
 // High Score System
@@ -1104,6 +1667,20 @@ function updateHighScoreDisplay() {
     if (highScoreElement) {
         highScoreElement.textContent = highScore;
     }
+}
+
+function initializeBriefingScreen() {
+    const briefingDiv = document.querySelector('.briefing-text');
+    if (!briefingDiv) return;
+
+    // Parse briefing text and create paragraphs
+    const lines = GAME_NARRATIVE.mission.briefing.split('\n').filter(line => line.trim());
+    briefingDiv.innerHTML = lines.map(line => {
+        if (line.includes('[CLASSIFIED]') || line.includes('[REDACTED]')) {
+            return `<p class="classified">${line}</p>`;
+        }
+        return `<p>${line}</p>`;
+    }).join('');
 }
 
 function isTopScore(score) {
@@ -1139,6 +1716,18 @@ function updateLives() {
     }
 }
 
+
+// Pause Game
+function togglePause() {
+    const pauseScreen = document.getElementById('pauseScreen');
+    gamePaused = !gamePaused;
+
+    if (gamePaused) {
+        pauseScreen.classList.remove('hidden');
+    } else {
+        pauseScreen.classList.add('hidden');
+    }
+}
 
 // Game Over
 function endGame() {
@@ -1196,6 +1785,14 @@ function startGame() {
     particles = [];
     enemyLights = [];
 
+    // Clean up portal if exists
+    if (portal) {
+        scene.remove(portal);
+        portal = null;
+    }
+    portalAnimating = false;
+    gamePaused = false;
+
     // Clear all key states to prevent stuck movement
     Object.keys(keys).forEach(key => keys[key] = false);
 
@@ -1208,9 +1805,12 @@ function startGame() {
     enemiesRequiredForBoss = 10;
     bossActive = false;
     boss = null;
-    levelTransitioning = false;
+    levelTransitioning = true;  // Start with transition active during level message
     lastEnemySpawn = 0;  // Reset spawn timer
     bossHealthBar.classList.add('hidden');
+
+    // Load level 1 theme
+    backgroundManager.loadLevelTheme(1);
 
     player.x = 0;
     player.y = -5;
@@ -1231,8 +1831,14 @@ function startGame() {
     updateHighScoreDisplay();
     startScreen.classList.add('hidden');
     gameOverScreen.classList.add('hidden');
+    document.getElementById('pauseScreen').classList.add('hidden');
 
-    showLevelMessage('Level 1 - START!');
+    showLevelMessage(1);
+
+    // Allow enemy spawning after level message disappears (3 seconds: 2.5s display + 0.5s fade)
+    setTimeout(() => {
+        levelTransitioning = false;
+    }, 3000);
 
     gameLoop();
 }
@@ -1243,11 +1849,24 @@ let lastEnemySpawn = 0;
 function gameLoop(timestamp = 0) {
     if (!gameRunning) return;
 
-    movePlayer();
-    updateBullets();
-    updateEnemies();
+    // If paused, only render (don't update game state)
+    if (gamePaused) {
+        renderer.render(scene, camera);
+        animationId = requestAnimationFrame(gameLoop);
+        return;
+    }
+
+    // Don't update player/bullets/enemies during portal animation
+    if (!portalAnimating) {
+        movePlayer();
+        updateBullets();
+        updateEnemies();
+    }
+
     updateParticles();
     starField.update();
+    backgroundManager.update();
+    updatePortal();
 
     if (bossActive) {
         updateBoss();
@@ -1294,5 +1913,6 @@ window.addEventListener('resize', () => {
 
 // Initialize high score display on page load
 updateHighScoreDisplay();
+initializeBriefingScreen();
 
 menuAnimation();
