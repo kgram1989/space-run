@@ -2480,8 +2480,8 @@ function gameLoop(timestamp = 0) {
         // Check if it's time to spawn boss (but not during level transition)
         if (!levelTransitioning && enemiesDefeatedThisLevel >= enemiesRequiredForBoss && enemies.length === 0) {
             createBoss();
-        } else if (!levelTransitioning) {
-            // Spawn regular enemies (but not during boss fight or level transition)
+        } else if (!levelTransitioning && enemiesDefeatedThisLevel < enemiesRequiredForBoss) {
+            // Spawn regular enemies only until threshold is reached
             const baseInterval = difficultySettings[difficulty].spawnInterval;
             const settings = difficultySettings[difficulty];
             const levelSpeedUp = Math.max(settings.minSpawnInterval, baseInterval - (currentLevel - 1) * 80);  // Slower reduction, capped
@@ -2579,16 +2579,32 @@ initializeBriefingScreen();
 // Tilt Controls — use device orientation for left/right movement on mobile
 let tiltEnabled = false;
 let tiltCalibrated = false;
-let tiltGammaOffset = 0;   // calibration: the phone's natural resting gamma
+let tiltBaseValue = 0;     // calibration: the phone's natural resting tilt
 const TILT_THRESHOLD = 5;  // degrees of tilt before movement starts
 const TILT_MAX = 30;       // degrees at which tilt is considered full
 
-function handleTiltOrientation(event) {
-    let gamma = event.gamma || 0;
+function getTiltValue(event) {
+    // In landscape mode, beta is left/right tilt (gamma is left/right only in portrait)
+    const angle = screen.orientation ? screen.orientation.angle :
+                  (window.orientation || 0);
 
-    // Calibrate: first few readings establish the "neutral" position
+    if (angle === 90) {
+        // Landscape: home button on right (CCW rotation)
+        return event.beta || 0;
+    } else if (angle === -90 || angle === 270) {
+        // Landscape: home button on left (CW rotation)
+        return -(event.beta || 0);
+    }
+    // Portrait fallback
+    return event.gamma || 0;
+}
+
+function handleTiltOrientation(event) {
+    const raw = getTiltValue(event);
+
+    // Calibrate: first reading establishes the "neutral" position
     if (!tiltCalibrated) {
-        tiltGammaOffset = gamma;
+        tiltBaseValue = raw;
         tiltCalibrated = true;
         return;
     }
@@ -2596,16 +2612,16 @@ function handleTiltOrientation(event) {
     if (!gameRunning || gamePaused || !tiltEnabled) return;
 
     // Subtract the calibrated offset so the player's natural hold = neutral
-    gamma -= tiltGammaOffset;
+    const tilt = raw - tiltBaseValue;
 
-    if (Math.abs(gamma) < TILT_THRESHOLD) {
+    if (Math.abs(tilt) < TILT_THRESHOLD) {
         tiltAmount = 0;
         return;
     }
 
     // Map from threshold..max range to 0..1, with sign
-    const sign = gamma > 0 ? 1 : -1;
-    const magnitude = Math.min((Math.abs(gamma) - TILT_THRESHOLD) / (TILT_MAX - TILT_THRESHOLD), 1);
+    const sign = tilt > 0 ? 1 : -1;
+    const magnitude = Math.min((Math.abs(tilt) - TILT_THRESHOLD) / (TILT_MAX - TILT_THRESHOLD), 1);
     tiltAmount = sign * magnitude;
 }
 
