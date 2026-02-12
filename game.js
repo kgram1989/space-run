@@ -1953,45 +1953,61 @@ function updateEngineParticles() {
     }
 }
 
-// Stars
-const stars = [];
+// Stars — multi-layer with twinkling
 function createStars() {
-    const starGeometry = new THREE.BufferGeometry();
-    const starMaterial = new THREE.PointsMaterial({
-        color: 0xffffff,
-        size: 0.4,
-        transparent: true,
-        opacity: 0.8
+    const layers = [];
+    const configs = [
+        { count: 400, size: 0.08, opacity: 0.6, twinkle: false },  // Tiny background
+        { count: 200, size: 0.15, opacity: 0.8, twinkle: true },   // Medium twinkling
+        { count: 50,  size: 0.25, opacity: 0.9, twinkle: true },   // Brighter stars
+    ];
+
+    configs.forEach(cfg => {
+        const geo = new THREE.BufferGeometry();
+        const mat = new THREE.PointsMaterial({
+            color: 0xffffff,
+            size: cfg.size,
+            transparent: true,
+            opacity: cfg.opacity,
+            sizeAttenuation: true
+        });
+
+        const verts = [];
+        for (let i = 0; i < cfg.count; i++) {
+            verts.push(
+                (Math.random() - 0.5) * 100,
+                (Math.random() - 0.5) * 60,
+                Math.random() * 100 - 20
+            );
+        }
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+        const points = new THREE.Points(geo, mat);
+        scene.add(points);
+        layers.push({ geo, mat, twinkle: cfg.twinkle, baseOpacity: cfg.opacity });
     });
 
-    const starVertices = [];
-    for (let i = 0; i < 300; i++) {
-        const x = (Math.random() - 0.5) * 100;
-        const y = (Math.random() - 0.5) * 60;
-        const z = Math.random() * 100 - 20;
-        starVertices.push(x, y, z);
-    }
-
-    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
-    const starField = new THREE.Points(starGeometry, starMaterial);
-    scene.add(starField);
-
-    // Animate stars moving toward player (flying forward effect)
+    let frame = 0;
     function animateStars() {
-        const positions = starGeometry.attributes.position.array;
-        for (let i = 2; i < positions.length; i += 3) {
-            positions[i] -= 0.3;
-            if (positions[i] < -20) {
-                positions[i] = 80;
-                // Randomize x and y when star resets
-                positions[i - 2] = (Math.random() - 0.5) * 100;
-                positions[i - 1] = (Math.random() - 0.5) * 60;
+        frame++;
+        layers.forEach(layer => {
+            const positions = layer.geo.attributes.position.array;
+            for (let i = 2; i < positions.length; i += 3) {
+                positions[i] -= 0.3;
+                if (positions[i] < -20) {
+                    positions[i] = 80;
+                    positions[i - 2] = (Math.random() - 0.5) * 100;
+                    positions[i - 1] = (Math.random() - 0.5) * 60;
+                }
             }
-        }
-        starGeometry.attributes.position.needsUpdate = true;
+            layer.geo.attributes.position.needsUpdate = true;
+
+            if (layer.twinkle) {
+                layer.mat.opacity = layer.baseOpacity + Math.sin(frame * 0.05) * 0.15;
+            }
+        });
     }
 
-    return { mesh: starField, update: animateStars };
+    return { update: animateStars };
 }
 
 const starField = createStars();
