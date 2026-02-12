@@ -78,9 +78,11 @@ body {
     border-color: rgba(255, 68, 68, 0.3);
 }
 
-.hud-heart {
-    font-size: 0.85em;
-    line-height: 1;
+.hud-lives::before {
+    content: "\2665";
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-variant-emoji: text;
+    margin-right: 4px;
 }
 
 .hud-btn {
