@@ -1959,7 +1959,7 @@ function createStars() {
     const configs = [
         { count: 400, size: 0.08, opacity: 0.6, twinkle: false },  // Tiny background
         { count: 200, size: 0.15, opacity: 0.8, twinkle: true },   // Medium twinkling
-        { count: 50,  size: 0.25, opacity: 0.9, twinkle: true },   // Brighter stars
+        { count: 50,  size: 0.20, opacity: 0.9, twinkle: true },   // Brighter stars
     ];
 
     configs.forEach(cfg => {
@@ -1983,7 +1983,7 @@ function createStars() {
         geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
         const points = new THREE.Points(geo, mat);
         scene.add(points);
-        layers.push({ geo, mat, twinkle: cfg.twinkle, baseOpacity: cfg.opacity });
+        layers.push({ geo, mat, twinkle: cfg.twinkle, baseOpacity: cfg.opacity, phase: Math.random() * Math.PI * 2 });
     });
 
     let frame = 0;
@@ -2002,7 +2002,7 @@ function createStars() {
             layer.geo.attributes.position.needsUpdate = true;
 
             if (layer.twinkle) {
-                layer.mat.opacity = layer.baseOpacity + Math.sin(frame * 0.05) * 0.15;
+                layer.mat.opacity = layer.baseOpacity * (0.4 + 0.6 * (0.5 + 0.5 * Math.sin(frame * 0.08 + layer.phase)));
             }
         });
     }
