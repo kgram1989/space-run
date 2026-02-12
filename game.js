@@ -94,9 +94,6 @@ const PORTAL_SPAWN_DELAY = 1500; // ms after boss defeat
 const LEVEL_MESSAGE_DURATION = 2500; // ms
 const LEVEL_MESSAGE_FADE_TIME = 500; // ms
 const LEVEL_MESSAGE_TOTAL_TIME = 3000; // LEVEL_MESSAGE_DURATION + LEVEL_MESSAGE_FADE_TIME
-const PLANET_DEPTH_SPACING = 40; // units between planet instances
-const PLANET_RESPAWN_MIN_DISTANCE = 100; // minimum z distance for planet respawn
-const PLANET_RESPAWN_MAX_DISTANCE = 40; // additional random distance
 
 // Easing Functions
 function easeOutQuad(t) {
@@ -162,12 +159,6 @@ Intel suggests heavy resistance across multiple star systems. Good luck, pilot.`
             description: "Departing Earth's solar system. Enemy scouts detected.",
             theme: {
                 background: { color: 0x000011 },
-                planets: [
-                    { type: 'small', color: 0x4444ff, distance: 60, size: 2 },
-                    { type: 'small', color: 0x8888ff, distance: 50, size: 1.5 },
-                    { type: 'large', color: 0x6666aa, distance: 70, size: 2.5 }
-                ],
-                nebula: null,
                 starColor: 0xffffff
             }
         },
@@ -177,12 +168,6 @@ Intel suggests heavy resistance across multiple star systems. Good luck, pilot.`
             description: "First jump complete. Navigating asteroid debris field.",
             theme: {
                 background: { color: 0x110011 },
-                planets: [
-                    { type: 'ringed', color: 0xffaa66, distance: 50, size: 4, ringColor: 0xccaa88 },
-                    { type: 'small', color: 0xff6699, distance: 65, size: 1.8 },
-                    { type: 'small', color: 0xaa44cc, distance: 55, size: 1.2 }
-                ],
-                nebula: { color: 0xff00ff, opacity: 0.15 },
                 starColor: 0xffffaa
             }
         },
@@ -192,12 +177,6 @@ Intel suggests heavy resistance across multiple star systems. Good luck, pilot.`
             description: "Hostile territory. Red giant star system.",
             theme: {
                 background: { color: 0x110000 },
-                planets: [
-                    { type: 'large', color: 0xff6600, distance: 70, size: 3 },
-                    { type: 'small', color: 0xff4400, distance: 55, size: 1.5 },
-                    { type: 'small', color: 0xcc3300, distance: 62, size: 1.0 }
-                ],
-                nebula: { color: 0xff0000, opacity: 0.12 },
                 starColor: 0xffaaaa
             }
         },
@@ -207,12 +186,6 @@ Intel suggests heavy resistance across multiple star systems. Good luck, pilot.`
             description: "Deep space. Long-range sensors compromised.",
             theme: {
                 background: { color: 0x000000 },
-                planets: [
-                    { type: 'large', color: 0x666666, distance: 75, size: 3 },
-                    { type: 'small', color: 0x444444, distance: 60, size: 1.5 },
-                    { type: 'ringed', color: 0x555555, distance: 68, size: 2.5, ringColor: 0x777777 }
-                ],
-                nebula: null,
                 starColor: 0xaaaaff
             }
         },
@@ -222,12 +195,6 @@ Intel suggests heavy resistance across multiple star systems. Good luck, pilot.`
             description: "Final approach. Destination ahead.",
             theme: {
                 background: { color: 0x001122 },
-                planets: [
-                    { type: 'ringed', color: 0x00ffaa, distance: 45, size: 5, ringColor: 0x00ccaa },
-                    { type: 'large', color: 0x00ddbb, distance: 60, size: 3.5 },
-                    { type: 'small', color: 0x00aaff, distance: 55, size: 2 }
-                ],
-                nebula: { color: 0x00ffff, opacity: 0.2 },
                 starColor: 0xaaffff
             }
         }
@@ -1322,7 +1289,7 @@ function nextLevel() {
     updateLevel();
 
     // Load new level theme
-    backgroundManager.loadLevelTheme(currentLevel);
+    loadLevelTheme(currentLevel);
 
     // Bonus life every 3 levels
     if (currentLevel % 3 === 0 && lives < 3) {
@@ -2012,234 +1979,13 @@ function createStars() {
 
 const starField = createStars();
 
-// Background Object Manager for level-specific visuals
-class BackgroundObjectManager {
-    constructor(scene) {
-        this.scene = scene;
-        this.planets = [];
-        this.nebulaGroup = null;
-    }
-
-    loadLevelTheme(levelNumber) {
-        // Clear existing background objects
-        this.clearObjects();
-
-        // Get level theme data
-        const levelData = GAME_NARRATIVE.levels[levelNumber - 1];
-        if (!levelData) {
-            // Fallback for levels beyond defined data - reuse last theme
-            const lastLevel = GAME_NARRATIVE.levels[GAME_NARRATIVE.levels.length - 1];
-            if (lastLevel && lastLevel.theme) {
-                this.applyTheme(lastLevel.theme);
-            }
-            return;
-        }
-
-        this.applyTheme(levelData.theme);
-    }
-
-    applyTheme(theme) {
-        // Update scene background and fog
-        this.scene.background = new THREE.Color(theme.background.color);
-        this.scene.fog.color = new THREE.Color(theme.background.color);
-
-        // Create planets if defined
-        if (theme.planets && theme.planets.length > 0) {
-            // Adjust instance count based on how many planet types are defined
-            const planetTypeCount = theme.planets.length;
-            const instancesPerPlanet = planetTypeCount === 1 ? 2 : 1; // Less instances if multiple planet types
-
-            theme.planets.forEach(planetData => {
-                this.createPlanet(planetData, instancesPerPlanet);
-            });
-        }
-
-        // Create nebula if defined
-        if (theme.nebula) {
-            this.createNebula(theme.nebula);
-        }
-    }
-
-    createPlanet(planetData, instancesPerPlanet = 2) {
-        // Create specified number of instances at staggered distances
-        for (let instance = 0; instance < instancesPerPlanet; instance++) {
-            let planetMesh;
-
-            if (planetData.type === 'ringed') {
-                // Create planet with ring
-                const group = new THREE.Group();
-
-                // Main planet sphere
-                const sphereGeometry = new THREE.SphereGeometry(planetData.size, 32, 32);
-                const sphereMaterial = new THREE.MeshStandardMaterial({
-                    color: planetData.color,
-                    emissive: planetData.color,
-                    emissiveIntensity: 0.2,
-                    metalness: 0.4,
-                    roughness: 0.7
-                });
-                const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-                group.add(sphere);
-
-                // Ring
-                const ringGeometry = new THREE.TorusGeometry(planetData.size * 1.8, planetData.size * 0.3, 2, 48);
-                const ringMaterial = new THREE.MeshStandardMaterial({
-                    color: planetData.ringColor || 0xcccccc,
-                    emissive: planetData.ringColor || 0xcccccc,
-                    emissiveIntensity: 0.1,
-                    metalness: 0.6,
-                    roughness: 0.5,
-                    transparent: true,
-                    opacity: 0.7
-                });
-                const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-                ring.rotation.x = Math.PI / 2.5; // Tilt the ring
-                group.add(ring);
-
-                planetMesh = group;
-            } else {
-                // Simple planet (small or large)
-                const geometry = new THREE.SphereGeometry(planetData.size, 32, 32);
-                const material = new THREE.MeshStandardMaterial({
-                    color: planetData.color,
-                    emissive: planetData.color,
-                    emissiveIntensity: 0.2,
-                    metalness: 0.4,
-                    roughness: 0.7
-                });
-                planetMesh = new THREE.Mesh(geometry, material);
-            }
-
-            // Stagger distances: spread instances across depth range
-            const baseDistance = planetData.distance;
-            const instanceDistance = baseDistance + (instance * PLANET_DEPTH_SPACING);
-
-            // Position planet further to the sides and higher up (out of gameplay area)
-            const side = Math.random() < 0.5 ? -1 : 1; // Choose left or right side
-            const randomX = side * (40 + Math.random() * 30); // Range: ±40 to ±70 (far from center)
-            const randomY = -2 + Math.random() * 30; // Range: -2 to 28 (higher up, out of gameplay)
-            planetMesh.position.set(randomX, randomY, instanceDistance + 20); // Extra 20 units back
-
-            // Set render order to appear behind game objects
-            planetMesh.renderOrder = -2;
-
-            // Add to scene
-            this.scene.add(planetMesh);
-
-            // Store in planets array with parallax speed and original data for respawning
-            const speed = 0.08 + Math.random() * 0.07; // Speed range: 0.08-0.15
-            this.planets.push({
-                mesh: planetMesh,
-                speed: speed,
-                rotationSpeed: (Math.random() - 0.5) * 0.01,
-                templateData: planetData // Store for respawning
-            });
-        }
-    }
-
-    createNebula(nebulaData) {
-        this.nebulaGroup = new THREE.Group();
-
-        // Create 3 overlapping semi-transparent spheres for distant nebula effect
-        for (let i = 0; i < 3; i++) {
-            const size = 15 + Math.random() * 10; // Smaller sizes: 15-25
-            const geometry = new THREE.SphereGeometry(size, 32, 32); // More segments for smoother look
-            const material = new THREE.MeshBasicMaterial({
-                color: nebulaData.color,
-                transparent: true,
-                opacity: 0.05 + Math.random() * 0.05, // Much lower opacity: 0.05-0.1
-                side: THREE.BackSide,
-                depthWrite: false,
-                fog: true
-            });
-            const cloud = new THREE.Mesh(geometry, material);
-
-            // Position much further back and more spread out
-            cloud.position.set(
-                (Math.random() - 0.5) * 80, // Wider spread: -40 to 40
-                (Math.random() - 0.5) * 50, // Taller spread: -25 to 25
-                100 + Math.random() * 60 // Much further back: z: 100-160
-            );
-
-            this.nebulaGroup.add(cloud);
-        }
-
-        // Set render order to appear furthest back
-        this.nebulaGroup.renderOrder = -3;
-
-        this.scene.add(this.nebulaGroup);
-    }
-
-    update() {
-        // Update planets - parallax scrolling with respawning
-        for (let i = this.planets.length - 1; i >= 0; i--) {
-            const planet = this.planets[i];
-
-            // Move planet forward (toward camera)
-            planet.mesh.position.z -= planet.speed;
-
-            // Apply slow rotation
-            if (planet.mesh.rotation) {
-                planet.mesh.rotation.y += planet.rotationSpeed;
-            }
-
-            // Respawn planet if it passes the camera (continuous loop)
-            if (planet.mesh.position.z < -30) {
-                // Reposition far back with new random x/y (keep in background)
-                const side = Math.random() < 0.5 ? -1 : 1; // Choose left or right side
-                const randomX = side * (40 + Math.random() * 30); // Range: ±40 to ±70
-                const randomY = -2 + Math.random() * 30; // Range: -2 to 28 (higher up)
-                const respawnDistance = PLANET_RESPAWN_MIN_DISTANCE + Math.random() * PLANET_RESPAWN_MAX_DISTANCE; // Range: 100-140 (safer distance)
-                planet.mesh.position.set(randomX, randomY, respawnDistance);
-
-                // Add variety: randomize scale (85%-115% of original)
-                const scaleVariation = 0.85 + Math.random() * 0.3;
-                planet.mesh.scale.set(scaleVariation, scaleVariation, scaleVariation);
-
-                // Randomize rotation for variety
-                planet.mesh.rotation.set(
-                    Math.random() * Math.PI * 2,
-                    Math.random() * Math.PI * 2,
-                    Math.random() * Math.PI * 2
-                );
-            }
-        }
-
-        // Update nebula - very slow parallax
-        if (this.nebulaGroup) {
-            this.nebulaGroup.position.z -= 0.02; // Very slow movement
-
-            // Respawn nebula if it passes the camera
-            if (this.nebulaGroup.position.z < -50) {
-                // Reset to far distance instead of removing
-                this.nebulaGroup.position.z = 120 + Math.random() * 40; // Range: 120-160
-
-                // Randomize positions of individual clouds for variety
-                this.nebulaGroup.children.forEach(cloud => {
-                    cloud.position.x = (Math.random() - 0.5) * 80;
-                    cloud.position.y = (Math.random() - 0.5) * 50;
-                });
-            }
-        }
-    }
-
-    clearObjects() {
-        // Remove all planets
-        this.planets.forEach(planet => {
-            this.scene.remove(planet.mesh);
-        });
-        this.planets = [];
-
-        // Remove nebula
-        if (this.nebulaGroup) {
-            this.scene.remove(this.nebulaGroup);
-            this.nebulaGroup = null;
-        }
-    }
+// Apply level theme (background color)
+function loadLevelTheme(levelNumber) {
+    const levelData = GAME_NARRATIVE.levels[levelNumber - 1];
+    const theme = levelData ? levelData.theme : GAME_NARRATIVE.levels[GAME_NARRATIVE.levels.length - 1].theme;
+    scene.background = new THREE.Color(theme.background.color);
+    scene.fog.color = new THREE.Color(theme.background.color);
 }
-
-// Create background manager instance
-const backgroundManager = new BackgroundObjectManager(scene);
 
 // Lane indicators removed - better options below
 
@@ -2432,7 +2178,7 @@ function startGame() {
     bossHealthBar.classList.add('hidden');
 
     // Load level 1 theme
-    backgroundManager.loadLevelTheme(1);
+    loadLevelTheme(1);
 
     player.x = 0;
     player.y = -5;
@@ -2498,7 +2244,6 @@ function gameLoop(timestamp = 0) {
     updateParticles();
     updateEngineParticles();
     starField.update();
-    backgroundManager.update();
     updatePortal();
     updateCameraShake();
 
