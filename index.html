@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Space Shooter 3D</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="screen-orientation" content="landscape">
+    <title>Space Run</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
@@ -16,7 +17,7 @@
 <body>
     <div class="game-container">
         <div class="header">
-            <h1>SPACE SHOOTER</h1>
+            <h1>SPACE RUN</h1>
             <div class="stats">
                 <div class="score">Score: <span id="score">0</span></div>
                 <div class="lives">Lives: <span id="lives">3</span></div>
@@ -60,6 +61,22 @@
         </div>
         <div class="controls">
             <p>Controls: ← → to Move | Space to Shoot | P to Pause | ESC to Exit</p>
+        </div>
+        <div id="touchControls" class="touch-controls">
+            <div class="touch-left">
+                <button id="touchLeft" class="touch-btn touch-move">&#9664;</button>
+                <button id="touchRight" class="touch-btn touch-move">&#9654;</button>
+            </div>
+            <div class="touch-right">
+                <button id="touchFire" class="touch-btn touch-fire">FIRE</button>
+                <button id="touchPause" class="touch-btn touch-pause">&#10074;&#10074;</button>
+            </div>
+        </div>
+        <div id="rotateOverlay" class="rotate-overlay">
+            <div class="rotate-content">
+                <div class="rotate-icon">&#x1F4F1;</div>
+                <p>Rotate your device to landscape</p>
+            </div>
         </div>
     </div>
     <script src="game.js"></script>

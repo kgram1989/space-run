@@ -61,6 +61,7 @@ let portal = null;
 let portalAnimating = false;
 let portalAnimationId = null;
 let levelTransitionTimeout = null;
+let tiltAmount = 0; // -1 (full left) to +1 (full right), 0 = no tilt
 
 // Camera shake system
 let cameraShake = {
@@ -722,15 +723,23 @@ function updateCinematicCamera() {
 
 // Move Player
 function movePlayer() {
-    // Horizontal movement
-    if (keys['ArrowLeft']) {
+    // Horizontal movement (keyboard, touch buttons, or tilt)
+    const moveLeft = keys['ArrowLeft'];
+    const moveRight = keys['ArrowRight'];
+
+    if (moveLeft) {
         player.velocityX -= player.acceleration;
     }
-    if (keys['ArrowRight']) {
+    if (moveRight) {
         player.velocityX += player.acceleration;
     }
 
-    if (!keys['ArrowLeft'] && !keys['ArrowRight']) {
+    // Tilt: apply proportional acceleration + friction so ship reaches a
+    // proportional terminal velocity instead of always maxing out
+    if (tiltAmount !== 0 && !moveLeft && !moveRight) {
+        player.velocityX += tiltAmount * player.acceleration;
+        player.velocityX *= player.friction;
+    } else if (tiltAmount === 0 && !moveLeft && !moveRight) {
         player.velocityX *= player.friction;
         if (Math.abs(player.velocityX) < 0.01) {
             player.velocityX = 0;
@@ -742,7 +751,14 @@ function movePlayer() {
 
     player.x -= player.velocityX;  // Flipped to fix opposite movement
 
-    const boundary = 35;
+    // Compute visible x-boundary at the player's depth from the camera frustum
+    const playerWorld = new THREE.Vector3(0, player.y, player.z);
+    const distToPlayer = camera.position.distanceTo(playerWorld);
+    const vFov = THREE.MathUtils.degToRad(camera.fov);
+    const visibleHeight = 2 * Math.tan(vFov / 2) * distToPlayer;
+    const visibleWidth = visibleHeight * camera.aspect;
+    const boundary = (visibleWidth / 2) * 0.9; // 90% to keep ship fully visible
+
     if (player.x < -boundary) {
         player.x = -boundary;
         player.velocityX = 0;
@@ -2312,17 +2328,17 @@ function displayHighScores(scores) {
     if (!highScoresContainer) return;
 
     if (scores.length === 0) {
-        highScoresContainer.innerHTML = '<p style="color: rgba(255,255,255,0.5); font-size: 0.9em;">No high scores yet</p>';
+        highScoresContainer.innerHTML = '<p class="hs-empty">No high scores yet</p>';
         return;
     }
 
-    let html = '<h3 style="font-size: 1.2em; margin-bottom: 15px; color: #00ffff;">🏆 TOP 5 SCORES</h3>';
+    let html = '<h3 class="hs-title">TOP 5 SCORES</h3>';
     scores.forEach((entry, index) => {
         const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '🏅';
         html += `
-            <div style="margin: 8px 0; padding: 8px; background: rgba(0,255,255,0.1); border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 1.1em;">${medal} ${entry.name}</span>
-                <span style="color: #ffff00; font-weight: bold;">${entry.score} <span style="color: #00ffff; font-size: 0.8em;">(${entry.difficulty})</span></span>
+            <div class="hs-entry">
+                <span class="hs-name">${medal} ${entry.name}</span>
+                <span class="hs-score">${entry.score} <span class="hs-diff">(${entry.difficulty})</span></span>
             </div>
         `;
     });
@@ -2352,6 +2368,7 @@ function startGame() {
 
     // Clear all key states to prevent stuck movement
     Object.keys(keys).forEach(key => keys[key] = false);
+    tiltAmount = 0;
 
     gameRunning = true;
     score = 0;
@@ -2484,5 +2501,107 @@ window.addEventListener('resize', () => {
 // Initialize high score display on page load
 updateHighScoreDisplay();
 initializeBriefingScreen();
+
+// Touch Controls Setup (supports both touch and mouse for DevTools compatibility)
+(function setupTouchControls() {
+    const touchLeft = document.getElementById('touchLeft');
+    const touchRight = document.getElementById('touchRight');
+    const touchFire = document.getElementById('touchFire');
+    const touchPause = document.getElementById('touchPause');
+    if (!touchLeft) return;
+
+    let fireInterval = null;
+
+    function addInputListeners(element, onStart, onEnd) {
+        // Touch events (mobile)
+        element.addEventListener('touchstart', (e) => { e.preventDefault(); onStart(); });
+        element.addEventListener('touchend', (e) => { e.preventDefault(); onEnd(); });
+        element.addEventListener('touchcancel', () => { onEnd(); });
+        // Mouse events (DevTools / desktop fallback)
+        element.addEventListener('mousedown', (e) => { e.preventDefault(); onStart(); });
+        element.addEventListener('mouseup', (e) => { e.preventDefault(); onEnd(); });
+        element.addEventListener('mouseleave', () => { onEnd(); });
+    }
+
+    // Movement buttons
+    addInputListeners(touchLeft,
+        () => { keys['ArrowLeft'] = true; touchLeft.classList.add('active'); },
+        () => { keys['ArrowLeft'] = false; touchLeft.classList.remove('active'); }
+    );
+    addInputListeners(touchRight,
+        () => { keys['ArrowRight'] = true; touchRight.classList.add('active'); },
+        () => { keys['ArrowRight'] = false; touchRight.classList.remove('active'); }
+    );
+
+    // Fire button — shoot on tap, auto-fire on hold
+    function tryShoot() {
+        if (gameRunning && !gamePaused && !levelTransitioning) {
+            shootBullet();
+        }
+    }
+
+    function startFire() {
+        touchFire.classList.add('active');
+        tryShoot();
+        if (!fireInterval) fireInterval = setInterval(tryShoot, 150);
+    }
+    function stopFire() {
+        touchFire.classList.remove('active');
+        clearInterval(fireInterval);
+        fireInterval = null;
+    }
+    addInputListeners(touchFire, startFire, stopFire);
+
+    // Pause button
+    addInputListeners(touchPause,
+        () => { touchPause.classList.add('active'); if (gameRunning) togglePause(); },
+        () => { touchPause.classList.remove('active'); }
+    );
+})();
+
+// Tilt Controls — use device orientation for left/right movement on mobile
+(function setupTiltControls() {
+    let tiltEnabled = false;
+    const TILT_THRESHOLD = 5;   // degrees of tilt before movement starts
+    const TILT_MAX = 30;        // degrees at which tilt is considered full
+
+    function handleOrientation(event) {
+        if (!gameRunning || gamePaused || !tiltEnabled) return;
+
+        // gamma: left-to-right tilt in degrees (-90 to 90)
+        let gamma = event.gamma || 0;
+
+        if (Math.abs(gamma) < TILT_THRESHOLD) {
+            tiltAmount = 0;
+            return;
+        }
+
+        // Map from threshold..max range to 0..1, with sign
+        const sign = gamma > 0 ? 1 : -1;
+        const magnitude = Math.min((Math.abs(gamma) - TILT_THRESHOLD) / (TILT_MAX - TILT_THRESHOLD), 1);
+        tiltAmount = sign * magnitude;
+    }
+
+    function enableTilt() {
+        if (tiltEnabled) return;
+        tiltEnabled = true;
+        window.addEventListener('deviceorientation', handleOrientation);
+    }
+
+    // iOS 13+ requires user gesture to request permission
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+        // Will request on first touch of any game button
+        document.querySelector('.touch-controls').addEventListener('touchstart', function reqPerm() {
+            DeviceOrientationEvent.requestPermission()
+                .then(state => { if (state === 'granted') enableTilt(); })
+                .catch(() => {});
+            document.querySelector('.touch-controls').removeEventListener('touchstart', reqPerm);
+        }, { once: true });
+    } else if ('DeviceOrientationEvent' in window) {
+        // Android and older iOS — just enable
+        enableTilt();
+    }
+})();
 
 menuAnimation();
