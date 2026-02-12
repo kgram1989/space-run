@@ -2295,6 +2295,7 @@ function updateLives() {
 
 // Pause Game
 function togglePause() {
+    if (!gameRunning) return;
     const pauseScreen = document.getElementById('pauseScreen');
     gamePaused = !gamePaused;
 
@@ -2524,7 +2525,6 @@ initializeBriefingScreen();
     const touchLeft = document.getElementById('touchLeft');
     const touchRight = document.getElementById('touchRight');
     const touchFire = document.getElementById('touchFire');
-    const touchPause = document.getElementById('touchPause');
     if (!touchLeft) return;
 
     let fireInterval = null;
@@ -2568,12 +2568,6 @@ initializeBriefingScreen();
         fireInterval = null;
     }
     addInputListeners(touchFire, startFire, stopFire);
-
-    // Pause button
-    addInputListeners(touchPause,
-        () => { touchPause.classList.add('active'); if (gameRunning) togglePause(); },
-        () => { touchPause.classList.remove('active'); }
-    );
 })();
 
 // Tilt Controls — use device orientation for left/right movement on mobile

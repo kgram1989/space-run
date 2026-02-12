@@ -19,23 +19,24 @@
 </head>
 <body>
     <div class="game-container">
-        <div class="header">
-            <h1>SPACE RUN</h1>
-            <div class="stats">
-                <div class="score">Score: <span id="score">0</span></div>
-                <div class="lives">Lives: <span id="lives">3</span></div>
-                <div class="high-score">High: <span id="highScore">0</span></div>
-                <div class="level">Level: <span id="level">1</span></div>
+        <div class="hud-top">
+            <div class="hud-left">
+                <div class="hud-item hud-lives">&#x2764;&#xFE0F; <span id="lives">3</span></div>
+                <div class="hud-item hud-score"><span id="score">0</span></div>
+                <div class="hud-item hud-level">Lv.<span id="level">1</span></div>
             </div>
-            <div id="bossHealthBar" class="boss-health-bar hidden">
-                <div class="boss-label">BOSS</div>
-                <div class="health-bar-container">
-                    <div class="health-bar-fill" id="bossHealthFill"></div>
-                </div>
+            <div class="hud-right">
+                <button id="pauseBtn" class="hud-btn" onclick="togglePause()" title="Pause">&#10074;&#10074;</button>
+                <button id="muteBtn" class="hud-btn" onclick="toggleMute()" title="Toggle Sound">&#x1F50A;</button>
+            </div>
+        </div>
+        <div id="bossHealthBar" class="boss-health-bar hidden">
+            <div class="boss-label">BOSS</div>
+            <div class="health-bar-container">
+                <div class="health-bar-fill" id="bossHealthFill"></div>
             </div>
         </div>
         <canvas id="gameCanvas"></canvas>
-        <button id="muteBtn" onclick="toggleMute()" title="Toggle Sound">&#x1F50A;</button>
         <div id="startScreen" class="start-screen">
             <div class="mission-briefing">
                 <h3 class="mission-title">OPERATION DEEP HORIZON</h3>
@@ -72,7 +73,6 @@
             </div>
             <div class="touch-right">
                 <button id="touchFire" class="touch-btn touch-fire">FIRE</button>
-                <button id="touchPause" class="touch-btn touch-pause">&#10074;&#10074;</button>
             </div>
         </div>
         <div id="rotateOverlay" class="rotate-overlay">
