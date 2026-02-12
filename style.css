@@ -705,6 +705,23 @@ body::before {
         font-size: 0.8em;
     }
 
+    .boss-health-bar {
+        top: 55px;
+        padding: 5px 15px;
+        border-radius: 8px;
+    }
+
+    .boss-label {
+        font-size: 0.8em;
+        margin-bottom: 4px;
+        letter-spacing: 1px;
+    }
+
+    .health-bar-container {
+        width: 150px;
+        height: 12px;
+    }
+
     .start-screen,
     .game-over,
     .pause-screen {

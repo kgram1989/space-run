@@ -25,9 +25,10 @@ camera.position.set(0, 12, -18);
 camera.lookAt(0, -3, 25);
 
 // Renderer Setup
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap at 2x (iPhone can be 3x)
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -36,9 +37,12 @@ const composer = new THREE.EffectComposer(renderer);
 const renderPass = new THREE.RenderPass(scene, camera);
 composer.addPass(renderPass);
 
+const bloomRes = isMobile
+    ? new THREE.Vector2(Math.floor(window.innerWidth / 2), Math.floor(window.innerHeight / 2))
+    : new THREE.Vector2(window.innerWidth, window.innerHeight);
 const bloomPass = new THREE.UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.6,  // strength
+    bloomRes,
+    isMobile ? 0.4 : 0.6,  // strength (reduced on mobile)
     0.4,  // radius
     0.85  // threshold
 );
@@ -602,6 +606,19 @@ restartBtn.addEventListener('click', () => {
 difficultyBtns.forEach(btn => {
     btn.addEventListener('click', (e) => {
         difficulty = e.target.dataset.difficulty;
+        // Request tilt permission on iOS (must be in direct user gesture)
+        if (typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof DeviceOrientationEvent.requestPermission === 'function') {
+            DeviceOrientationEvent.requestPermission()
+                .then(state => { if (state === 'granted') enableTiltControls(); })
+                .catch(() => {});
+        }
+        // Request fullscreen on mobile
+        const el = document.documentElement;
+        if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+        else if (el.msRequestFullscreen) el.msRequestFullscreen();
+
         startGame();
     });
 });
@@ -2560,48 +2577,38 @@ initializeBriefingScreen();
 })();
 
 // Tilt Controls — use device orientation for left/right movement on mobile
-(function setupTiltControls() {
-    let tiltEnabled = false;
-    const TILT_THRESHOLD = 5;   // degrees of tilt before movement starts
-    const TILT_MAX = 30;        // degrees at which tilt is considered full
+let tiltEnabled = false;
+const TILT_THRESHOLD = 5;   // degrees of tilt before movement starts
+const TILT_MAX = 30;        // degrees at which tilt is considered full
 
-    function handleOrientation(event) {
-        if (!gameRunning || gamePaused || !tiltEnabled) return;
+function handleTiltOrientation(event) {
+    if (!gameRunning || gamePaused || !tiltEnabled) return;
 
-        // gamma: left-to-right tilt in degrees (-90 to 90)
-        let gamma = event.gamma || 0;
+    // gamma: left-to-right tilt in degrees (-90 to 90)
+    let gamma = event.gamma || 0;
 
-        if (Math.abs(gamma) < TILT_THRESHOLD) {
-            tiltAmount = 0;
-            return;
-        }
-
-        // Map from threshold..max range to 0..1, with sign
-        const sign = gamma > 0 ? 1 : -1;
-        const magnitude = Math.min((Math.abs(gamma) - TILT_THRESHOLD) / (TILT_MAX - TILT_THRESHOLD), 1);
-        tiltAmount = sign * magnitude;
+    if (Math.abs(gamma) < TILT_THRESHOLD) {
+        tiltAmount = 0;
+        return;
     }
 
-    function enableTilt() {
-        if (tiltEnabled) return;
-        tiltEnabled = true;
-        window.addEventListener('deviceorientation', handleOrientation);
-    }
+    // Map from threshold..max range to 0..1, with sign
+    const sign = gamma > 0 ? 1 : -1;
+    const magnitude = Math.min((Math.abs(gamma) - TILT_THRESHOLD) / (TILT_MAX - TILT_THRESHOLD), 1);
+    tiltAmount = sign * magnitude;
+}
 
-    // iOS 13+ requires user gesture to request permission
-    if (typeof DeviceOrientationEvent !== 'undefined' &&
-        typeof DeviceOrientationEvent.requestPermission === 'function') {
-        // Will request on first touch of any game button
-        document.querySelector('.touch-controls').addEventListener('touchstart', function reqPerm() {
-            DeviceOrientationEvent.requestPermission()
-                .then(state => { if (state === 'granted') enableTilt(); })
-                .catch(() => {});
-            document.querySelector('.touch-controls').removeEventListener('touchstart', reqPerm);
-        }, { once: true });
-    } else if ('DeviceOrientationEvent' in window) {
-        // Android and older iOS — just enable
-        enableTilt();
-    }
-})();
+function enableTiltControls() {
+    if (tiltEnabled) return;
+    tiltEnabled = true;
+    window.addEventListener('deviceorientation', handleTiltOrientation);
+}
+
+// Android and non-permission browsers — enable tilt immediately
+if (typeof DeviceOrientationEvent !== 'undefined' &&
+    typeof DeviceOrientationEvent.requestPermission !== 'function' &&
+    'DeviceOrientationEvent' in window) {
+    enableTiltControls();
+}
 
 menuAnimation();
