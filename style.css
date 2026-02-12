@@ -78,6 +78,11 @@ body {
     border-color: rgba(255, 68, 68, 0.3);
 }
 
+.hud-heart {
+    font-size: 0.85em;
+    line-height: 1;
+}
+
 .hud-btn {
     background: rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -702,6 +707,10 @@ body::before {
         padding: 4px 10px;
         font-size: 0.85em;
         border-radius: 8px;
+        height: 30px;
+        line-height: 22px;
+        display: flex;
+        align-items: center;
     }
 
     .hud-btn {
