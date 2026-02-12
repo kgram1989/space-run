@@ -1122,6 +1122,18 @@ function defeatBoss() {
     score += levelBonus;
     updateScore();
 
+    // Boss counts as 3 enemies for extra life
+    if (lives < 3) {
+        targetsHit += 3;
+        if (targetsHit >= 10) {
+            lives++;
+            updateLives();
+            targetsHit = lives < 3 ? targetsHit - 10 : 0;
+        }
+    } else {
+        targetsHit = 0;
+    }
+
     // Create portal and animate player entering it
     setTimeout(() => {
         createPortal();
@@ -1734,13 +1746,15 @@ function checkCollisions() {
                 enemiesDefeatedThisLevel++;
 
                 // Life bonus: gain 1 life for every 10 targets hit (max 3)
-                targetsHit++;
-                if (targetsHit >= 10 && lives < 3) {
-                    lives++;
+                if (lives < 3) {
+                    targetsHit++;
+                    if (targetsHit >= 10) {
+                        lives++;
+                        updateLives();
+                        targetsHit = lives < 3 ? targetsHit - 10 : 0;
+                    }
+                } else {
                     targetsHit = 0;
-                    updateLives();
-                } else if (targetsHit >= 10) {
-                    targetsHit = 0;  // Reset counter even if at max lives
                 }
 
                 break;  // Bullet hit something, move to next bullet
