@@ -613,11 +613,10 @@ difficultyBtns.forEach(btn => {
                 .then(state => { if (state === 'granted') enableTiltControls(); })
                 .catch(() => {});
         }
-        // Request fullscreen on mobile
-        const el = document.documentElement;
-        if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-        else if (el.msRequestFullscreen) el.msRequestFullscreen();
+        // Lock orientation to landscape on mobile (more reliable than Fullscreen API)
+        if (screen.orientation && screen.orientation.lock) {
+            screen.orientation.lock('landscape').catch(() => {});
+        }
 
         startGame();
     });
@@ -2386,6 +2385,7 @@ function startGame() {
     // Clear all key states to prevent stuck movement
     Object.keys(keys).forEach(key => keys[key] = false);
     tiltAmount = 0;
+    tiltCalibrated = false; // recalibrate tilt for new game
 
     gameRunning = true;
     score = 0;
@@ -2578,14 +2578,25 @@ initializeBriefingScreen();
 
 // Tilt Controls — use device orientation for left/right movement on mobile
 let tiltEnabled = false;
-const TILT_THRESHOLD = 5;   // degrees of tilt before movement starts
-const TILT_MAX = 30;        // degrees at which tilt is considered full
+let tiltCalibrated = false;
+let tiltGammaOffset = 0;   // calibration: the phone's natural resting gamma
+const TILT_THRESHOLD = 5;  // degrees of tilt before movement starts
+const TILT_MAX = 30;       // degrees at which tilt is considered full
 
 function handleTiltOrientation(event) {
+    let gamma = event.gamma || 0;
+
+    // Calibrate: first few readings establish the "neutral" position
+    if (!tiltCalibrated) {
+        tiltGammaOffset = gamma;
+        tiltCalibrated = true;
+        return;
+    }
+
     if (!gameRunning || gamePaused || !tiltEnabled) return;
 
-    // gamma: left-to-right tilt in degrees (-90 to 90)
-    let gamma = event.gamma || 0;
+    // Subtract the calibrated offset so the player's natural hold = neutral
+    gamma -= tiltGammaOffset;
 
     if (Math.abs(gamma) < TILT_THRESHOLD) {
         tiltAmount = 0;
@@ -2601,6 +2612,7 @@ function handleTiltOrientation(event) {
 function enableTiltControls() {
     if (tiltEnabled) return;
     tiltEnabled = true;
+    tiltCalibrated = false; // recalibrate on enable
     window.addEventListener('deviceorientation', handleTiltOrientation);
 }
 
