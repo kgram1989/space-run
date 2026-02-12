@@ -127,6 +127,31 @@ h1 {
     display: block;
 }
 
+#muteBtn {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 15;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    width: 44px;
+    height: 44px;
+    font-size: 1.4em;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    transition: all 0.2s ease;
+    padding: 0;
+    line-height: 44px;
+    text-align: center;
+}
+
+#muteBtn:hover {
+    background: rgba(0, 0, 0, 0.6);
+    border-color: rgba(0, 255, 255, 0.5);
+    transform: scale(1.1);
+}
+
 .controls {
     position: absolute;
     bottom: 30px;

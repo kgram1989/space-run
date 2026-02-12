@@ -368,6 +368,18 @@ const keys = {};
 
 // Sound System - Web Audio API
 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+const masterGain = audioContext.createGain();
+masterGain.connect(audioContext.destination);
+let isMuted = false;
+
+function toggleMute() {
+    isMuted = !isMuted;
+    masterGain.gain.value = isMuted ? 0 : 1;
+    const muteBtn = document.getElementById('muteBtn');
+    if (muteBtn) {
+        muteBtn.textContent = isMuted ? '\u{1F507}' : '\u{1F50A}';
+    }
+}
 
 async function ensureAudioContext() {
     if (audioContext.state === 'suspended') {
@@ -385,7 +397,7 @@ function playShootSound() {
     const gainNode = audioContext.createGain();
 
     oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainNode.connect(masterGain);
 
     oscillator.frequency.value = 800;
     oscillator.type = 'square';
@@ -405,7 +417,7 @@ function playExplosionSound() {
 
     oscillator.connect(filter);
     filter.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainNode.connect(masterGain);
 
     oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
     oscillator.frequency.exponentialRampToValueAtTime(50, audioContext.currentTime + 0.3);
@@ -427,7 +439,7 @@ function playHitSound() {
     const gainNode = audioContext.createGain();
 
     oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainNode.connect(masterGain);
 
     oscillator.frequency.value = 300;
     oscillator.type = 'sine';
@@ -445,7 +457,7 @@ function playGameOverSound() {
     const gainNode = audioContext.createGain();
 
     oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainNode.connect(masterGain);
 
     oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
     oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.5);
@@ -464,7 +476,7 @@ function playBossHitSound() {
     const gainNode = audioContext.createGain();
 
     oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainNode.connect(masterGain);
 
     oscillator.frequency.value = 150;
     oscillator.type = 'sawtooth';
@@ -482,7 +494,7 @@ function playLevelCompleteSound() {
     const gainNode = audioContext.createGain();
 
     oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainNode.connect(masterGain);
 
     oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
     oscillator.frequency.exponentialRampToValueAtTime(800, audioContext.currentTime + 0.3);
@@ -504,7 +516,7 @@ function playPortalSound() {
     const bass = audioContext.createOscillator();
     const bassGain = audioContext.createGain();
     bass.connect(bassGain);
-    bassGain.connect(audioContext.destination);
+    bassGain.connect(masterGain);
     bass.frequency.setValueAtTime(50, audioContext.currentTime);
     bass.frequency.exponentialRampToValueAtTime(30, audioContext.currentTime + duration);
     bass.type = 'sine';
@@ -515,7 +527,7 @@ function playPortalSound() {
     const sweep = audioContext.createOscillator();
     const sweepGain = audioContext.createGain();
     sweep.connect(sweepGain);
-    sweepGain.connect(audioContext.destination);
+    sweepGain.connect(masterGain);
     sweep.frequency.setValueAtTime(200, audioContext.currentTime);
     sweep.frequency.exponentialRampToValueAtTime(2000, audioContext.currentTime + duration);
     sweep.type = 'sawtooth';
@@ -531,7 +543,7 @@ function playPortalSound() {
     lfo.connect(lfoGain);
     lfoGain.connect(warble.frequency);
     warble.connect(warbleGain);
-    warbleGain.connect(audioContext.destination);
+    warbleGain.connect(masterGain);
 
     lfo.frequency.value = 6; // 6 Hz wobble
     lfoGain.gain.value = 100;
@@ -555,7 +567,7 @@ function playPortalSound() {
 document.addEventListener('keydown', (e) => {
     keys[e.key] = true;
 
-    if (e.key === ' ' && gameRunning && !gamePaused) {
+    if (e.key === ' ' && gameRunning && !gamePaused && !levelTransitioning) {
         e.preventDefault();
         shootBullet();
     }
@@ -996,32 +1008,65 @@ function checkBossCollision() {
 function defeatBoss() {
     if (!boss) return;
 
-    const bossPos = boss.mesh.position.clone();  // Save position before removal
-
     playExplosionSound();
     playLevelCompleteSound();
-    shakeCamera(1.5);  // Big shake for boss explosion!
+    shakeCamera(0.6);  // Bigger shake for boss explosion
 
-    // Start cinematic camera orbit around explosion
-    startCinematicCamera('boss_defeat', bossPos);
+    // Flash effect - larger for boss
+    const flashGeometry = new THREE.SphereGeometry(2, 16, 16);
+    const flashMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffff00,
+        transparent: true,
+        opacity: 1.0
+    });
+    const flashMesh = new THREE.Mesh(flashGeometry, flashMaterial);
+    flashMesh.position.copy(boss.mesh.position);
+    scene.add(flashMesh);
+    particles.push({
+        mesh: flashMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 10,
+        isFlash: true
+    });
 
-    // Massive explosion
-    for (let i = 0; i < 100; i++) {
-        const geometry = new THREE.SphereGeometry(0.3, 6, 6);
+    // Shockwave ring - bigger for boss
+    const ringGeometry = new THREE.TorusGeometry(0.6, 0.1, 8, 16);
+    const ringMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff3300,
+        transparent: true,
+        opacity: 0.8
+    });
+    const ringMesh = new THREE.Mesh(ringGeometry, ringMaterial);
+    ringMesh.position.copy(boss.mesh.position);
+    ringMesh.rotation.x = Math.PI / 2;
+    scene.add(ringMesh);
+    particles.push({
+        mesh: ringMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 15,
+        isShockwave: true,
+        expandRate: 0.3
+    });
+
+    // Boss explosion - more particles, bigger, but contained
+    for (let i = 0; i < 50; i++) {
+        const size = 0.15 + Math.random() * 0.25;
+        const geometry = new THREE.SphereGeometry(size, 6, 6);
         const material = new THREE.MeshBasicMaterial({
             color: Math.random() > 0.3 ? 0xff0000 : 0xffff00
         });
         const particleMesh = new THREE.Mesh(geometry, material);
         particleMesh.position.copy(boss.mesh.position);
 
+        const speed = 0.3 + Math.random() * 0.5;
         const particle = {
             mesh: particleMesh,
             velocity: new THREE.Vector3(
-                (Math.random() - 0.5) * 2.0,
-                (Math.random() - 0.5) * 2.0,
-                (Math.random() - 0.5) * 2.0
+                (Math.random() - 0.5) * speed,
+                (Math.random() - 0.5) * speed,
+                (Math.random() - 0.5) * speed
             ),
-            life: 50
+            life: 35
         };
 
         scene.add(particleMesh);
@@ -1031,7 +1076,11 @@ function defeatBoss() {
     scene.remove(boss.mesh);
     boss = null;
     bossActive = false;
-    levelTransitioning = true;  // Prevent boss spawning during transition
+    levelTransitioning = true;  // Prevent boss spawning and shooting during transition
+
+    // Clear all bullets from screen
+    bullets.forEach(b => scene.remove(b.mesh));
+    bullets = [];
     bossHealthBar.classList.add('hidden');
 
     // Award bonus points based on difficulty and level (with gradual scaling)
@@ -1617,6 +1666,7 @@ function checkCollisions() {
 
         for (let eIndex = enemies.length - 1; eIndex >= 0; eIndex--) {
             const enemy = enemies[eIndex];
+            if (enemy.dying) continue;  // Skip enemies already destroyed
             const enemyPos = enemy.mesh.position;
 
             // Check if bullet is in same Z-plane as enemy (with tolerance)
@@ -1670,6 +1720,7 @@ function checkCollisions() {
     const playerPos = player.mesh.position;
     for (let index = enemies.length - 1; index >= 0; index--) {
         const enemy = enemies[index];
+        if (enemy.dying) continue;  // Skip dying enemies
         const enemyPos = enemy.mesh.position;
         const distance = playerPos.distanceTo(enemyPos);
 
@@ -1689,14 +1740,14 @@ function checkCollisions() {
 // Particles
 function createExplosion(x, y, z) {
     playExplosionSound();  // Play sound effect
-    shakeCamera(0.3);  // Small shake for regular explosions
+    shakeCamera(0.15);  // Subtle shake for regular explosions
 
     // Flash effect - bright sphere that fades quickly
-    const flashGeometry = new THREE.SphereGeometry(2, 16, 16);
+    const flashGeometry = new THREE.SphereGeometry(1.2, 12, 12);
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: 0xffff00,
         transparent: true,
-        opacity: 1.0
+        opacity: 0.9
     });
     const flashMesh = new THREE.Mesh(flashGeometry, flashMaterial);
     flashMesh.position.set(x, y, z);
@@ -1704,16 +1755,16 @@ function createExplosion(x, y, z) {
     particles.push({
         mesh: flashMesh,
         velocity: new THREE.Vector3(0, 0, 0),
-        life: 8,
+        life: 7,
         isFlash: true
     });
 
-    // Shockwave ring - expanding ring
-    const ringGeometry = new THREE.TorusGeometry(0.5, 0.1, 8, 16);
+    // Shockwave ring
+    const ringGeometry = new THREE.TorusGeometry(0.4, 0.07, 8, 16);
     const ringMaterial = new THREE.MeshBasicMaterial({
         color: 0xff6600,
         transparent: true,
-        opacity: 0.8
+        opacity: 0.7
     });
     const ringMesh = new THREE.Mesh(ringGeometry, ringMaterial);
     ringMesh.position.set(x, y, z);
@@ -1722,14 +1773,14 @@ function createExplosion(x, y, z) {
     particles.push({
         mesh: ringMesh,
         velocity: new THREE.Vector3(0, 0, 0),
-        life: 15,
+        life: 12,
         isShockwave: true,
-        expandRate: 0.5
+        expandRate: 0.3
     });
 
-    // Main explosion particles - varied sizes and speeds
-    for (let i = 0; i < 30; i++) {
-        const size = 0.15 + Math.random() * 0.25;  // Varied sizes
+    // Main explosion particles - contained but visible
+    for (let i = 0; i < 20; i++) {
+        const size = 0.1 + Math.random() * 0.15;
         const geometry = new THREE.SphereGeometry(size, 6, 6);
         const material = new THREE.MeshBasicMaterial({
             color: Math.random() > 0.5 ? 0xff6600 : 0xffff00
@@ -1737,15 +1788,15 @@ function createExplosion(x, y, z) {
         const particleMesh = new THREE.Mesh(geometry, material);
         particleMesh.position.set(x, y, z);
 
-        const speed = 0.3 + Math.random() * 0.7;  // Varied speeds
+        const speed = 0.2 + Math.random() * 0.4;
         const particle = {
             mesh: particleMesh,
             velocity: new THREE.Vector3(
-                (Math.random() - 0.5) * speed * 2,
-                (Math.random() - 0.5) * speed * 2,
-                (Math.random() - 0.5) * speed * 2
+                (Math.random() - 0.5) * speed,
+                (Math.random() - 0.5) * speed,
+                (Math.random() - 0.5) * speed
             ),
-            life: 35
+            life: 20
         };
 
         scene.add(particleMesh);
