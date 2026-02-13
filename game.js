@@ -1254,7 +1254,7 @@ function createBoss() {
         group.add(armor);
     }
 
-    group.scale.set(1.5, 1.5, 1.5);
+    group.scale.set(2.0, 2.0, 2.0);
 
     // Scale boss health based on difficulty and level
     const baseHealth = 15 + (currentLevel * 5);
@@ -1868,7 +1868,7 @@ function createEnemy(type) {
             group.add(plate);
         }
 
-        group.scale.set(0.6, 0.6, 0.6);
+        group.scale.set(0.8, 0.8, 0.8);
         group.userData.enginePositions = [{ x: 0, y: 0, z: 1.0 }];
         mesh = group;
     } else if (type === 1) {
@@ -1987,7 +1987,7 @@ function createEnemy(type) {
             group.add(halo);
         });
 
-        group.scale.set(0.6, 0.6, 0.6);
+        group.scale.set(0.8, 0.8, 0.8);
         group.userData.enginePositions = [
             { x: -0.6, y: 0, z: 1.3 },
             { x: 0.6, y: 0, z: 1.3 }
@@ -2142,7 +2142,7 @@ function createEnemy(type) {
             group.add(glow);
         });
 
-        group.scale.set(0.5, 0.5, 0.5);
+        group.scale.set(0.7, 0.7, 0.7);
         group.userData.enginePositions = [
             { x: -0.6, y: 0, z: 1.5 },
             { x: 0, y: 0, z: 1.5 },
@@ -2661,7 +2661,7 @@ function createEnemyEngineParticles() {
         const positions = enemy.mesh.userData.enginePositions;
         if (!positions) continue;
         const typeColors = colors[enemy.type] || colors[0];
-        const scale = enemy.type === 2 ? 0.5 : 0.6;
+        const scale = enemy.type === 2 ? 0.7 : 0.8;
 
         positions.forEach(offset => {
             const geo = new THREE.SphereGeometry(0.1, 6, 6);
