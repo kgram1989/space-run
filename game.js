@@ -26,10 +26,10 @@ camera.lookAt(0, -3, 25);
 
 // Renderer Setup
 const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap at 2x (iPhone can be 3x)
-renderer.shadowMap.enabled = true;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
+renderer.shadowMap.enabled = !isMobile;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 // Post-processing setup - Bloom effect for glow
@@ -336,8 +336,8 @@ function createPlayer() {
     player.wings = wings;  // Store reference for animation
     player.leftEngine = leftGlow;  // Store reference for glow animation
     player.rightEngine = rightGlow;  // Store reference for glow animation
-    player.mesh.castShadow = true;
-    player.mesh.receiveShadow = true;
+    player.mesh.castShadow = !isMobile;
+    player.mesh.receiveShadow = !isMobile;
     scene.add(player.mesh);
 }
 
@@ -810,7 +810,7 @@ scene.add(ambientLight);
 
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(10, 20, 30);
-directionalLight.castShadow = true;
+directionalLight.castShadow = !isMobile;
 directionalLight.shadow.mapSize.width = 1024;
 directionalLight.shadow.mapSize.height = 1024;
 scene.add(directionalLight);
@@ -1273,7 +1273,7 @@ function createBoss() {
     };
 
     boss.mesh.position.set(0, -5, 70);
-    boss.mesh.castShadow = true;
+    boss.mesh.castShadow = !isMobile;
 
     // Add massive red point light
     const light = new THREE.PointLight(0xff0000, 5, 25);
@@ -2170,8 +2170,8 @@ function createEnemy(type) {
     const x = (Math.random() - 0.5) * 30;
     const y = -5 + (Math.random() - 0.5) * 4;  // Spawn around center with some variance
     enemy.mesh.position.set(x, y, 70);
-    enemy.mesh.castShadow = true;
-    enemy.mesh.receiveShadow = true;
+    enemy.mesh.castShadow = !isMobile;
+    enemy.mesh.receiveShadow = !isMobile;
 
     // Add point light to enemy
     const light = new THREE.PointLight(
