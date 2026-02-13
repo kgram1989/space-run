@@ -117,7 +117,10 @@ const difficultySettings = {
         bossHealthMultiplier: 0.7,
         bossBonusMultiplier: 0.8,
         minSpawnInterval: 1200,
-        scalingFactor: 0.20   // Controls growth rate (slower for easy)
+        scalingFactor: 0.20,  // Controls growth rate (slower for easy)
+        enemyFireInterval: { min: 180, max: 300 },  // frames between enemy shots
+        bossFireInterval: 60,
+        bossMultiShot: false
     },
     medium: {
         enemySpeed: { min: 0.2, max: 0.35 },
@@ -126,7 +129,10 @@ const difficultySettings = {
         bossHealthMultiplier: 1.0,
         bossBonusMultiplier: 1.0,
         minSpawnInterval: 800,
-        scalingFactor: 0.25   // Medium growth rate
+        scalingFactor: 0.25,  // Medium growth rate
+        enemyFireInterval: { min: 120, max: 240 },
+        bossFireInterval: 40,
+        bossMultiShot: true
     },
     hard: {
         enemySpeed: { min: 0.35, max: 0.55 },
@@ -135,7 +141,10 @@ const difficultySettings = {
         bossHealthMultiplier: 1.3,
         bossBonusMultiplier: 1.5,
         minSpawnInterval: 700,
-        scalingFactor: 0.28   // Faster growth but diminishing
+        scalingFactor: 0.28,  // Faster growth but diminishing
+        enemyFireInterval: { min: 60, max: 150 },
+        bossFireInterval: 25,
+        bossMultiShot: true
     }
 };
 
@@ -216,7 +225,11 @@ const player = {
     mesh: null,
     wings: null,  // Reference to wings for animation
     leftEngine: null,  // Reference to left engine glow
-    rightEngine: null  // Reference to right engine glow
+    rightEngine: null,  // Reference to right engine glow
+    shield: true,
+    shieldMesh: null,
+    invulnerable: false,
+    invulnerableTimer: 0
 };
 
 // Create Player Mesh - Modern Fighter Design
@@ -328,12 +341,167 @@ function createPlayer() {
     scene.add(player.mesh);
 }
 
+// Shield System
+function createShieldMesh() {
+    const shieldGroup = new THREE.Group();
+
+    // Main shield bubble
+    const shieldGeometry = new THREE.SphereGeometry(3.0, 24, 24);
+    const shieldMaterial = new THREE.MeshStandardMaterial({
+        color: 0x00ccff,
+        emissive: 0x0088ff,
+        emissiveIntensity: 0.4,
+        transparent: true,
+        opacity: 0.15,
+        metalness: 0.9,
+        roughness: 0.1,
+        side: THREE.DoubleSide
+    });
+    const shieldSphere = new THREE.Mesh(shieldGeometry, shieldMaterial);
+    shieldGroup.add(shieldSphere);
+
+    // Inner glow
+    const innerGlowGeometry = new THREE.SphereGeometry(2.8, 16, 16);
+    const innerGlowMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ffff,
+        transparent: true,
+        opacity: 0.05
+    });
+    shieldGroup.add(new THREE.Mesh(innerGlowGeometry, innerGlowMaterial));
+
+    // Hex wireframe overlay
+    const wireGeometry = new THREE.IcosahedronGeometry(3.05, 1);
+    const wireMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ffff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.12
+    });
+    shieldGroup.add(new THREE.Mesh(wireGeometry, wireMaterial));
+
+    player.shieldMesh = shieldGroup;
+    player.mesh.add(shieldGroup);
+}
+
+function updateShield() {
+    if (!player.shieldMesh) return;
+
+    if (player.shield) {
+        // Rotate wireframe
+        const wireframe = player.shieldMesh.children[2];
+        if (wireframe) {
+            wireframe.rotation.y += 0.005;
+            wireframe.rotation.x += 0.003;
+        }
+        // Pulse opacity
+        const shieldSphere = player.shieldMesh.children[0];
+        if (shieldSphere && shieldSphere.material) {
+            shieldSphere.material.opacity = Math.sin(Date.now() * 0.003) * 0.05 + 0.15;
+        }
+    }
+
+    // Invulnerability flash
+    if (player.invulnerable) {
+        player.invulnerableTimer--;
+        if (player.mesh) {
+            player.mesh.visible = Math.floor(player.invulnerableTimer / 4) % 2 === 0;
+        }
+        if (player.invulnerableTimer <= 0) {
+            player.invulnerable = false;
+            if (player.mesh) player.mesh.visible = true;
+        }
+    }
+}
+
+function breakShield() {
+    player.shield = false;
+    player.invulnerable = true;
+    player.invulnerableTimer = 60;
+
+    playShieldBreakSound();
+    shakeCamera(0.2);
+
+    if (player.shieldMesh) {
+        player.shieldMesh.visible = false;
+    }
+
+    const px = player.x;
+    const py = player.y;
+    const pz = player.z;
+
+    // Expanding ring
+    const ringGeometry = new THREE.TorusGeometry(1.0, 0.08, 8, 24);
+    const ringMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ffff,
+        transparent: true,
+        opacity: 0.8
+    });
+    const ringMesh = new THREE.Mesh(ringGeometry, ringMaterial);
+    ringMesh.position.set(px, py, pz);
+    ringMesh.rotation.x = Math.PI / 2;
+    scene.add(ringMesh);
+    particles.push({
+        mesh: ringMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 15,
+        isShockwave: true,
+        expandRate: 0.25
+    });
+
+    // Flash sphere
+    const flashGeometry = new THREE.SphereGeometry(2.0, 12, 12);
+    const flashMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ccff,
+        transparent: true,
+        opacity: 0.8
+    });
+    const flashMesh = new THREE.Mesh(flashGeometry, flashMaterial);
+    flashMesh.position.set(px, py, pz);
+    scene.add(flashMesh);
+    particles.push({
+        mesh: flashMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 8,
+        isFlash: true
+    });
+
+    // Scatter particles
+    for (let i = 0; i < 15; i++) {
+        const size = 0.08 + Math.random() * 0.12;
+        const geometry = new THREE.SphereGeometry(size, 6, 6);
+        const material = new THREE.MeshBasicMaterial({
+            color: Math.random() > 0.5 ? 0x00ffff : 0x0088ff
+        });
+        const particleMesh = new THREE.Mesh(geometry, material);
+        particleMesh.position.set(px, py, pz);
+        const speed = 0.2 + Math.random() * 0.4;
+        scene.add(particleMesh);
+        particles.push({
+            mesh: particleMesh,
+            velocity: new THREE.Vector3(
+                (Math.random() - 0.5) * speed,
+                (Math.random() - 0.5) * speed,
+                (Math.random() - 0.5) * speed
+            ),
+            life: 25
+        });
+    }
+}
+
+function restoreShield() {
+    player.shield = true;
+    if (player.shieldMesh) {
+        player.shieldMesh.visible = true;
+    }
+}
+
 // Arrays
 let bullets = [];
 let enemies = [];
 let particles = [];
 let enemyLights = [];
 let engineParticles = [];
+let enemyBullets = [];
 
 // Keys
 const keys = {};
@@ -533,6 +701,51 @@ function playPortalSound() {
     warble.stop(audioContext.currentTime + duration);
     lfo.start(audioContext.currentTime);
     lfo.stop(audioContext.currentTime + duration);
+}
+
+function playShieldBreakSound() {
+    ensureAudioContext();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    const filter = audioContext.createBiquadFilter();
+
+    oscillator.connect(filter);
+    filter.connect(gainNode);
+    gainNode.connect(masterGain);
+
+    oscillator.frequency.setValueAtTime(1200, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.3);
+    oscillator.type = 'sine';
+
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(2000, audioContext.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.3);
+    filter.Q.value = 2;
+
+    gainNode.gain.setValueAtTime(0.25, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.3);
+}
+
+function playEnemyShootSound() {
+    ensureAudioContext();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(masterGain);
+
+    oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.08);
+    oscillator.type = 'sawtooth';
+
+    gainNode.gain.setValueAtTime(0.06, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.08);
+
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.08);
 }
 
 // Event Listeners
@@ -834,6 +1047,61 @@ function updateBullets() {
     }
 }
 
+// Enemy Bullet System
+function createEnemyBullet(sourceX, sourceY, sourceZ, targetX, targetY, targetZ, speed) {
+    const direction = new THREE.Vector3(
+        targetX - sourceX,
+        targetY - sourceY,
+        targetZ - sourceZ
+    ).normalize();
+
+    const geometry = new THREE.SphereGeometry(0.25, 8, 8);
+    geometry.scale(1, 1, 2);
+    const material = new THREE.MeshBasicMaterial({
+        color: 0xff2200,
+        transparent: true,
+        opacity: 0.9
+    });
+    const bulletMesh = new THREE.Mesh(geometry, material);
+    bulletMesh.position.set(sourceX, sourceY, sourceZ);
+    bulletMesh.lookAt(targetX, targetY, targetZ);
+
+    // Glow trail
+    const glowGeometry = new THREE.SphereGeometry(0.15, 6, 6);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff6600,
+        transparent: true,
+        opacity: 0.6
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    glow.position.z = -0.4;
+    bulletMesh.add(glow);
+
+    scene.add(bulletMesh);
+    enemyBullets.push({
+        mesh: bulletMesh,
+        velocity: direction.multiplyScalar(speed || 0.5),
+        life: 300
+    });
+}
+
+function updateEnemyBullets() {
+    for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        const bullet = enemyBullets[i];
+        bullet.mesh.position.add(bullet.velocity);
+        bullet.life--;
+
+        if (bullet.life <= 0 ||
+            bullet.mesh.position.z < -30 ||
+            bullet.mesh.position.z > 100 ||
+            Math.abs(bullet.mesh.position.x) > 50 ||
+            Math.abs(bullet.mesh.position.y) > 30) {
+            scene.remove(bullet.mesh);
+            enemyBullets.splice(i, 1);
+        }
+    }
+}
+
 // Create Boss Enemy
 function createBoss() {
     const group = new THREE.Group();
@@ -904,7 +1172,9 @@ function createBoss() {
         maxHealth: bossHealth,
         speed: 0.1,
         direction: 1,
-        box: new THREE.Box3()
+        box: new THREE.Box3(),
+        fireTimer: 60,
+        fireInterval: difficultySettings[difficulty].bossFireInterval
     };
 
     boss.mesh.position.set(0, -5, 70);
@@ -946,6 +1216,29 @@ function updateBoss() {
     // Rotation for intimidation
     boss.mesh.rotation.y += 0.01;
     boss.mesh.rotation.z = Math.sin(Date.now() * 0.001) * 0.1;
+
+    // Boss shooting logic
+    boss.fireTimer--;
+    if (boss.fireTimer <= 0) {
+        const bossPos = boss.mesh.position;
+        if (difficultySettings[difficulty].bossMultiShot) {
+            for (let s = -1; s <= 1; s++) {
+                createEnemyBullet(
+                    bossPos.x, bossPos.y, bossPos.z,
+                    player.x + s * 8, player.y, player.z,
+                    0.5 + (currentLevel - 1) * 0.03
+                );
+            }
+        } else {
+            createEnemyBullet(
+                bossPos.x, bossPos.y, bossPos.z,
+                player.x, player.y, player.z,
+                0.45
+            );
+        }
+        playEnemyShootSound();
+        boss.fireTimer = boss.fireInterval;
+    }
 
     boss.box.setFromObject(boss.mesh);
 
@@ -998,7 +1291,7 @@ function checkBossCollision() {
     const playerPos = player.mesh.position;
     const distance = playerPos.distanceTo(bossPos);
 
-    if (distance < 6) {
+    if (distance < 6 && !player.invulnerable) {
         lives = 0;
         updateLives();
     }
@@ -1080,6 +1373,8 @@ function defeatBoss() {
     // Clear all bullets from screen
     bullets.forEach(b => scene.remove(b.mesh));
     bullets = [];
+    enemyBullets.forEach(b => scene.remove(b.mesh));
+    enemyBullets = [];
     bossHealthBar.classList.add('hidden');
 
     // Award bonus points based on difficulty and level (with gradual scaling)
@@ -1544,7 +1839,10 @@ function createEnemy(type) {
         lateralSpeed: (Math.random() - 0.5) * 0.25 * levelMultiplier,
         lateralDirection: Math.random() < 0.5 ? -1 : 1,  // Initial direction
         waveOffset: Math.random() * Math.PI * 2,  // Random starting point in wave
-        waveAmplitude: 0.5 + Math.random() * 1.0  // Wave intensity
+        waveAmplitude: 0.5 + Math.random() * 1.0,  // Wave intensity
+        fireTimer: Math.floor(Math.random() * 120) + 60,
+        fireInterval: settings.enemyFireInterval.min +
+            Math.floor(Math.random() * (settings.enemyFireInterval.max - settings.enemyFireInterval.min))
     };
 
     const x = (Math.random() - 0.5) * 30;
@@ -1657,6 +1955,24 @@ function updateEnemies() {
         // Animate enemy parts (rings, wings, weapons)
         animateEnemyParts(enemy);
 
+        // Enemy shooting logic
+        if (enemy.mesh.position.z > player.z && enemy.mesh.position.z < 65) {
+            enemy.fireTimer--;
+            if (enemy.fireTimer <= 0) {
+                createEnemyBullet(
+                    enemy.mesh.position.x,
+                    enemy.mesh.position.y,
+                    enemy.mesh.position.z,
+                    player.x,
+                    player.y,
+                    player.z,
+                    0.4 + (currentLevel - 1) * 0.02
+                );
+                playEnemyShootSound();
+                enemy.fireTimer = enemy.fireInterval;
+            }
+        }
+
         enemy.box.setFromObject(enemy.mesh);
 
         if (enemy.mesh.position.z < -20) {
@@ -1740,12 +2056,40 @@ function checkCollisions() {
         // Player collision radius
         const collisionRadius = 2.5;
 
-        if (distance < collisionRadius) {
+        if (distance < collisionRadius && !player.invulnerable) {
             createExplosion(enemyPos.x, enemyPos.y, enemyPos.z);
             scene.remove(enemy.mesh);
             enemies.splice(index, 1);
-            lives--;
-            updateLives();
+
+            if (player.shield) {
+                breakShield();
+            } else {
+                lives--;
+                updateLives();
+            }
+        }
+    }
+}
+
+function checkEnemyBulletCollisions() {
+    if (player.invulnerable || !player.mesh) return;
+
+    const playerPos = player.mesh.position;
+    for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        const bullet = enemyBullets[i];
+        const distance = playerPos.distanceTo(bullet.mesh.position);
+
+        if (distance < 2.5) {
+            scene.remove(bullet.mesh);
+            enemyBullets.splice(i, 1);
+
+            if (player.shield) {
+                breakShield();
+            } else {
+                lives--;
+                updateLives();
+            }
+            break;
         }
     }
 }
@@ -2064,7 +2408,12 @@ function updateLives() {
     if (lives <= 0) {
         endGame();
     } else {
-        playHitSound();  // Play hit sound when losing a life
+        playHitSound();
+        restoreShield();
+        if (!player.invulnerable) {
+            player.invulnerable = true;
+            player.invulnerableTimer = 90;
+        }
     }
 }
 
@@ -2095,6 +2444,10 @@ function endGame() {
         clearTimeout(levelTransitionTimeout);
         levelTransitionTimeout = null;
     }
+
+    // Clean up enemy bullets
+    enemyBullets.forEach(b => scene.remove(b.mesh));
+    enemyBullets = [];
 
     playGameOverSound();  // Play game over sound
 
@@ -2149,6 +2502,8 @@ function startGame() {
     enemies = [];
     particles = [];
     engineParticles = [];
+    enemyBullets.forEach(b => scene.remove(b.mesh));
+    enemyBullets = [];
     enemyLights = [];
 
     // Clean up portal if exists
@@ -2189,9 +2544,20 @@ function startGame() {
         createPlayer();
     }
     player.mesh.position.set(player.x, player.y, player.z);
+    player.mesh.visible = true;
 
     // Make sure ship is rotated to face forward (nose pointing toward positive Z)
     player.mesh.rotation.y = 0;
+
+    // Initialize shield
+    player.shield = true;
+    player.invulnerable = false;
+    player.invulnerableTimer = 0;
+    if (!player.shieldMesh) {
+        createShieldMesh();
+    } else {
+        player.shieldMesh.visible = true;
+    }
 
     updateScore();
     updateLives();
@@ -2232,6 +2598,8 @@ function gameLoop(timestamp = 0) {
         movePlayer();
         updateBullets();
         updateEnemies();
+        updateEnemyBullets();
+        updateShield();
 
         // Create engine particles every 2 frames (30 per second at 60fps)
         engineParticleCounter++;
@@ -2268,6 +2636,11 @@ function gameLoop(timestamp = 0) {
                 lastEnemySpawn = timestamp;
             }
         }
+    }
+
+    // Check enemy bullet collisions (runs in both boss and normal phases)
+    if (!portalAnimating) {
+        checkEnemyBulletCollisions();
     }
 
     composer.render();
