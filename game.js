@@ -13,6 +13,7 @@ const finalScoreElement = document.getElementById('finalScore');
 const gameDifficultyElement = document.getElementById('gameDifficulty');
 const restartBtn = document.getElementById('restartBtn');
 const difficultyBtns = document.querySelectorAll('.difficulty-btn');
+const touchControlsEl = document.getElementById('touchControls');
 
 // Three.js Scene Setup
 const scene = new THREE.Scene();
@@ -94,6 +95,20 @@ const PORTAL_SPAWN_DELAY = 1500; // ms after boss defeat
 const LEVEL_MESSAGE_DURATION = 2500; // ms
 const LEVEL_MESSAGE_FADE_TIME = 500; // ms
 const LEVEL_MESSAGE_TOTAL_TIME = 3000; // LEVEL_MESSAGE_DURATION + LEVEL_MESSAGE_FADE_TIME
+
+// Dispose helper — recursively free geometry + material GPU resources
+function disposeMesh(obj) {
+    if (!obj) return;
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+        else obj.material.dispose();
+    }
+    if (obj.children) {
+        // Copy array since dispose may modify children
+        [...obj.children].forEach(child => disposeMesh(child));
+    }
+}
 
 // Easing Functions
 function easeOutQuad(t) {
@@ -513,13 +528,31 @@ const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 const masterGain = audioContext.createGain();
 masterGain.connect(audioContext.destination);
 let isMuted = false;
+let masterOutputConnected = true;
+
+function applyMuteState() {
+    const gainValue = isMuted ? 0 : 1;
+    // Apply both direct value and automation for better cross-browser reliability.
+    masterGain.gain.cancelScheduledValues(audioContext.currentTime);
+    masterGain.gain.value = gainValue;
+    masterGain.gain.setValueAtTime(gainValue, audioContext.currentTime);
+    // Hard mute fallback: disconnect output path while muted.
+    if (isMuted && masterOutputConnected) {
+        masterGain.disconnect();
+        masterOutputConnected = false;
+    } else if (!isMuted && !masterOutputConnected) {
+        masterGain.connect(audioContext.destination);
+        masterOutputConnected = true;
+    }
+}
 
 function toggleMute() {
     isMuted = !isMuted;
-    masterGain.gain.value = isMuted ? 0 : 1;
+    applyMuteState();
     const muteBtn = document.getElementById('muteBtn');
     if (muteBtn) {
         muteBtn.textContent = isMuted ? '\u{1F507}' : '\u{1F50A}';
+        muteBtn.blur();
     }
 }
 
@@ -531,9 +564,12 @@ async function ensureAudioContext() {
             console.warn('Failed to resume audio context:', e);
         }
     }
+    // Always enforce mute state in case browser resumes or reconfigures audio graph.
+    applyMuteState();
 }
 
 function playShootSound() {
+    if (isMuted) return;
     ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -552,6 +588,7 @@ function playShootSound() {
 }
 
 function playExplosionSound() {
+    if (isMuted) return;
     ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -576,6 +613,7 @@ function playExplosionSound() {
 }
 
 function playHitSound() {
+    if (isMuted) return;
     ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -594,6 +632,7 @@ function playHitSound() {
 }
 
 function playGameOverSound() {
+    if (isMuted) return;
     ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -613,6 +652,7 @@ function playGameOverSound() {
 }
 
 function playBossHitSound() {
+    if (isMuted) return;
     ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -631,6 +671,7 @@ function playBossHitSound() {
 }
 
 function playLevelCompleteSound() {
+    if (isMuted) return;
     ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -650,6 +691,7 @@ function playLevelCompleteSound() {
 }
 
 function playPortalSound() {
+    if (isMuted) return;
     ensureAudioContext();
     // Create multiple oscillators for a rich portal/wormhole sound
     const duration = 2.5;
@@ -706,6 +748,7 @@ function playPortalSound() {
 }
 
 function playShieldBreakSound() {
+    if (isMuted) return;
     ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -732,6 +775,7 @@ function playShieldBreakSound() {
 }
 
 function playEnemyShootSound() {
+    if (isMuted) return;
     ensureAudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -754,9 +798,12 @@ function playEnemyShootSound() {
 document.addEventListener('keydown', (e) => {
     keys[e.key] = true;
 
-    if (e.key === ' ' && gameRunning && !gamePaused && !levelTransitioning) {
+    if (e.key === ' ' && gameRunning) {
+        // Prevent focused HUD buttons (e.g., mute) from toggling via Space key.
         e.preventDefault();
-        shootBullet();
+        if (!gamePaused && !levelTransitioning) {
+            shootBullet();
+        }
     }
 
     // P key to toggle pause
@@ -788,8 +835,8 @@ restartBtn.addEventListener('click', () => {
 difficultyBtns.forEach(btn => {
     btn.addEventListener('click', (e) => {
         difficulty = e.target.dataset.difficulty;
-        // Request tilt permission on iOS (must be in direct user gesture)
-        if (typeof DeviceOrientationEvent !== 'undefined' &&
+        // Request tilt permission on iOS (must be in direct user gesture, only once)
+        if (!tiltEnabled && typeof DeviceOrientationEvent !== 'undefined' &&
             typeof DeviceOrientationEvent.requestPermission === 'function') {
             DeviceOrientationEvent.requestPermission()
                 .then(state => { if (state === 'granted') enableTiltControls(); })
@@ -1043,6 +1090,7 @@ function updateBullets() {
         bullet.box.setFromObject(bullet.mesh);
 
         if (bullet.mesh.position.z > 80) {
+            disposeMesh(bullet.mesh);
             scene.remove(bullet.mesh);
             bullets.splice(i, 1);
         }
@@ -1098,6 +1146,7 @@ function updateEnemyBullets() {
             bullet.mesh.position.z > 100 ||
             Math.abs(bullet.mesh.position.x) > 50 ||
             Math.abs(bullet.mesh.position.y) > 30) {
+            disposeMesh(bullet.mesh);
             scene.remove(bullet.mesh);
             enemyBullets.splice(i, 1);
         }
@@ -1360,6 +1409,7 @@ function checkBossCollision() {
 
         if (distance < 4.5) {  // Boss hit radius
             playBossHitSound();
+            disposeMesh(bullet.mesh);
             scene.remove(bullet.mesh);
             bullets.splice(bIndex, 1);
 
@@ -1372,7 +1422,7 @@ function checkBossCollision() {
                     const originalIntensity = child.material.emissiveIntensity;
                     child.material.emissiveIntensity = 2;
                     setTimeout(() => {
-                        child.material.emissiveIntensity = originalIntensity;
+                        if (child.material) child.material.emissiveIntensity = originalIntensity;
                     }, 100);
                 }
             });
@@ -1462,15 +1512,16 @@ function defeatBoss() {
         particles.push(particle);
     }
 
+    disposeMesh(boss.mesh);
     scene.remove(boss.mesh);
     boss = null;
     bossActive = false;
     levelTransitioning = true;  // Prevent boss spawning and shooting during transition
 
     // Clear all bullets from screen
-    bullets.forEach(b => scene.remove(b.mesh));
+    bullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
     bullets = [];
-    enemyBullets.forEach(b => scene.remove(b.mesh));
+    enemyBullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
     enemyBullets = [];
     bossHealthBar.classList.add('hidden');
 
@@ -2272,6 +2323,7 @@ function updateEnemies() {
             enemy.mesh.scale.multiplyScalar(0.97);
 
             if (enemy.deathTimer <= 0) {
+                disposeMesh(enemy.mesh);
                 scene.remove(enemy.mesh);
                 enemies.splice(i, 1);
             }
@@ -2349,6 +2401,7 @@ function updateEnemies() {
         enemy.box.setFromObject(enemy.mesh);
 
         if (enemy.mesh.position.z < -20) {
+            disposeMesh(enemy.mesh);
             scene.remove(enemy.mesh);
             enemies.splice(i, 1);
             lives--;
@@ -2383,6 +2436,7 @@ function checkCollisions() {
 
             if (dy < yTolerance && dx < xHitRadius) {
                 createExplosion(enemyPos.x, enemyPos.y, enemyPos.z);
+                disposeMesh(bullet.mesh);
                 scene.remove(bullet.mesh);
                 bullets.splice(bIndex, 1);
 
@@ -2442,6 +2496,7 @@ function checkCollisions() {
 
         if (distance < collisionRadius && !player.invulnerable) {
             createExplosion(enemyPos.x, enemyPos.y, enemyPos.z);
+            disposeMesh(enemy.mesh);
             scene.remove(enemy.mesh);
             enemies.splice(index, 1);
 
@@ -2451,6 +2506,7 @@ function checkCollisions() {
                 lives--;
                 updateLives();
             }
+            break;  // Only one collision per frame — invulnerability handles the rest
         }
     }
 }
@@ -2464,6 +2520,7 @@ function checkEnemyBulletCollisions() {
         const distance = playerPos.distanceTo(bullet.mesh.position);
 
         if (distance < 2.5) {
+            disposeMesh(bullet.mesh);
             scene.remove(bullet.mesh);
             enemyBullets.splice(i, 1);
 
@@ -2556,6 +2613,7 @@ function updateParticles() {
             particle.mesh.scale.multiplyScalar(1.2);  // Expand quickly
 
             if (particle.life <= 0) {
+                disposeMesh(particle.mesh);
                 scene.remove(particle.mesh);
                 particles.splice(i, 1);
             }
@@ -2569,6 +2627,7 @@ function updateParticles() {
             particle.mesh.material.opacity = particle.life / 15;
 
             if (particle.life <= 0) {
+                disposeMesh(particle.mesh);
                 scene.remove(particle.mesh);
                 particles.splice(i, 1);
             }
@@ -2584,6 +2643,7 @@ function updateParticles() {
         particle.mesh.scale.multiplyScalar(0.97);
 
         if (particle.life <= 0) {
+            disposeMesh(particle.mesh);
             scene.remove(particle.mesh);
             particles.splice(i, 1);
         }
@@ -2642,6 +2702,7 @@ function updateEngineParticles() {
         particle.mesh.scale.multiplyScalar(0.95);
 
         if (particle.life <= 0) {
+            disposeMesh(particle.mesh);
             scene.remove(particle.mesh);
             engineParticles.splice(i, 1);
         }
@@ -2699,6 +2760,7 @@ function updateEnemyEngineParticles() {
         p.mesh.material.opacity = (p.life / 10) * 0.7;
         p.mesh.scale.multiplyScalar(0.93);
         if (p.life <= 0) {
+            disposeMesh(p.mesh);
             scene.remove(p.mesh);
             enemyEngineParticles.splice(i, 1);
         }
@@ -2867,8 +2929,10 @@ function togglePause() {
 
     if (gamePaused) {
         pauseScreen.classList.remove('hidden');
+        if (touchControlsEl) touchControlsEl.style.pointerEvents = 'none';
     } else {
         pauseScreen.classList.add('hidden');
+        if (touchControlsEl) touchControlsEl.style.pointerEvents = 'auto';
     }
 }
 
@@ -2887,11 +2951,12 @@ function endGame() {
     }
 
     // Clean up enemy bullets and engine particles
-    enemyBullets.forEach(b => scene.remove(b.mesh));
+    enemyBullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
     enemyBullets = [];
-    enemyEngineParticles.forEach(p => scene.remove(p.mesh));
+    enemyEngineParticles.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
     enemyEngineParticles = [];
 
+    if (touchControlsEl) touchControlsEl.style.pointerEvents = 'none';
     playGameOverSound();  // Play game over sound
 
     finalScoreElement.textContent = score;
@@ -2936,23 +3001,25 @@ function displayHighScores(scores) {
 
 // Start Game
 function startGame() {
-    // Clean up previous game
-    bullets.forEach(b => scene.remove(b.mesh));
-    enemies.forEach(e => scene.remove(e.mesh));
-    particles.forEach(p => scene.remove(p.mesh));
-    engineParticles.forEach(p => scene.remove(p.mesh));
+    // Clean up previous game — dispose GPU resources
+    bullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
+    enemies.forEach(e => { disposeMesh(e.mesh); scene.remove(e.mesh); });
+    particles.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
+    engineParticles.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
     bullets = [];
     enemies = [];
     particles = [];
     engineParticles = [];
-    enemyBullets.forEach(b => scene.remove(b.mesh));
+    enemyBullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
     enemyBullets = [];
-    enemyEngineParticles.forEach(p => scene.remove(p.mesh));
+    enemyEngineParticles.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
     enemyEngineParticles = [];
+    enemyLights.forEach(l => { if (l.dispose) l.dispose(); });
     enemyLights = [];
 
     // Clean up portal if exists
     if (portal) {
+        disposeMesh(portal);
         scene.remove(portal);
         portal = null;
     }
@@ -2965,6 +3032,7 @@ function startGame() {
     tiltCalibrated = false; // recalibrate tilt for new game
 
     gameRunning = true;
+    if (touchControlsEl) touchControlsEl.style.pointerEvents = 'auto';
     score = 0;
     lives = 3;
     targetsHit = 0;
@@ -3233,3 +3301,4 @@ if (typeof DeviceOrientationEvent !== 'undefined' &&
 }
 
 menuAnimation();
+
