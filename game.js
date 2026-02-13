@@ -502,6 +502,8 @@ let particles = [];
 let enemyLights = [];
 let engineParticles = [];
 let enemyBullets = [];
+let enemyEngineParticles = [];
+let enemyEngineParticleCounter = 0;
 
 // Keys
 const keys = {};
@@ -1106,21 +1108,20 @@ function updateEnemyBullets() {
 function createBoss() {
     const group = new THREE.Group();
 
-    // Massive core - larger octahedron
-    const coreGeometry = new THREE.OctahedronGeometry(3, 0);
-    const coreMaterial = new THREE.MeshStandardMaterial({
+    // Smooth core (2 subdivisions = 128 faces)
+    const coreGeo = new THREE.OctahedronGeometry(3, 2);
+    const coreMat = new THREE.MeshStandardMaterial({
         color: 0xff0000,
         emissive: 0xff0000,
         emissiveIntensity: 1.0,
         metalness: 0.9,
         roughness: 0.1
     });
-    const core = new THREE.Mesh(coreGeometry, coreMaterial);
-    group.add(core);
+    group.add(new THREE.Mesh(coreGeo, coreMat));
 
-    // Energy shield
-    const shieldGeometry = new THREE.SphereGeometry(4, 16, 16);
-    const shieldMaterial = new THREE.MeshStandardMaterial({
+    // Energy shield sphere (smoother)
+    const shieldGeo = new THREE.SphereGeometry(4, 24, 24);
+    const shieldMat = new THREE.MeshStandardMaterial({
         color: 0xff0000,
         emissive: 0xff0000,
         emissiveIntensity: 0.5,
@@ -1129,35 +1130,129 @@ function createBoss() {
         metalness: 0.9,
         roughness: 0.1
     });
-    const shield = new THREE.Mesh(shieldGeometry, shieldMaterial);
-    group.add(shield);
+    group.add(new THREE.Mesh(shieldGeo, shieldMat));
 
-    // Weapon arrays
-    const weaponGeometry = new THREE.ConeGeometry(0.5, 2, 6);
-    const weaponMaterial = new THREE.MeshStandardMaterial({
+    // Hex wireframe shield overlay
+    const bossWireGeo = new THREE.IcosahedronGeometry(4.2, 1);
+    const bossWireMat = new THREE.MeshBasicMaterial({
+        color: 0xff4444,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.15
+    });
+    const bossWireframe = new THREE.Mesh(bossWireGeo, bossWireMat);
+    bossWireframe.userData.isBossShield = true;
+    group.add(bossWireframe);
+
+    // Alternating weapon types: heavy cannons (even) + energy lances (odd)
+    const heavyMountGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const heavyBarrelGeo = new THREE.CylinderGeometry(0.15, 0.2, 2.0, 10);
+    const heavyMat = new THREE.MeshStandardMaterial({
+        color: 0x220000,
+        emissive: 0xff0000,
+        emissiveIntensity: 0.6,
+        metalness: 1.0
+    });
+    const lanceGeo = new THREE.ConeGeometry(0.2, 2.5, 8);
+    const lanceMat = new THREE.MeshStandardMaterial({
         color: 0x000000,
         emissive: 0xff0000,
         emissiveIntensity: 0.8,
         metalness: 1.0
     });
+    const lanceTipGeo = new THREE.SphereGeometry(0.15, 8, 8);
+    const lanceTipMat = new THREE.MeshBasicMaterial({
+        color: 0xffff00,
+        transparent: true,
+        opacity: 0.8
+    });
 
     for (let i = 0; i < 8; i++) {
-        const weapon = new THREE.Mesh(weaponGeometry, weaponMaterial);
         const angle = (i / 8) * Math.PI * 2;
-        weapon.position.set(Math.cos(angle) * 3.5, Math.sin(angle) * 3.5, 0);
-        weapon.rotation.z = angle + Math.PI / 2;
-        group.add(weapon);
+        if (i % 2 === 0) {
+            // Heavy cannon
+            const cannon = new THREE.Group();
+            cannon.add(new THREE.Mesh(heavyMountGeo, heavyMat));
+            const barrel = new THREE.Mesh(heavyBarrelGeo, heavyMat);
+            barrel.rotation.z = Math.PI / 2;
+            barrel.position.x = 1.2;
+            cannon.add(barrel);
+            cannon.position.set(Math.cos(angle) * 3.5, Math.sin(angle) * 3.5, 0);
+            cannon.rotation.z = angle;
+            group.add(cannon);
+        } else {
+            // Energy lance
+            const lance = new THREE.Mesh(lanceGeo, lanceMat);
+            lance.position.set(Math.cos(angle) * 3.5, Math.sin(angle) * 3.5, 0);
+            lance.rotation.z = angle + Math.PI / 2;
+            group.add(lance);
+            const tip = new THREE.Mesh(lanceTipGeo, lanceTipMat);
+            tip.position.set(Math.cos(angle) * 4.5, Math.sin(angle) * 4.5, 0);
+            tip.userData.isPulse = true;
+            group.add(tip);
+        }
     }
 
-    // Reactor core glow
-    const reactorGeometry = new THREE.SphereGeometry(1.5, 16, 16);
-    const reactorMaterial = new THREE.MeshBasicMaterial({
+    // Layered reactor: outer glow + inner core + energy ring
+    const reactorOuterGeo = new THREE.SphereGeometry(1.5, 24, 24);
+    const reactorOuterMat = new THREE.MeshBasicMaterial({
         color: 0xffff00,
+        transparent: true,
+        opacity: 0.5
+    });
+    const reactorOuter = new THREE.Mesh(reactorOuterGeo, reactorOuterMat);
+    reactorOuter.userData.isPulse = true;
+    group.add(reactorOuter);
+
+    const reactorInnerGeo = new THREE.SphereGeometry(0.8, 16, 16);
+    const reactorInnerMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
         transparent: true,
         opacity: 0.9
     });
-    const reactor = new THREE.Mesh(reactorGeometry, reactorMaterial);
-    group.add(reactor);
+    const reactorInner = new THREE.Mesh(reactorInnerGeo, reactorInnerMat);
+    reactorInner.userData.isPulse = true;
+    group.add(reactorInner);
+
+    const reactorRingGeo = new THREE.TorusGeometry(1.1, 0.06, 12, 24);
+    const reactorRingMat = new THREE.MeshBasicMaterial({
+        color: 0xff6600,
+        transparent: true,
+        opacity: 0.7
+    });
+    const reactorRing = new THREE.Mesh(reactorRingGeo, reactorRingMat);
+    reactorRing.userData.isRing = true;
+    reactorRing.userData.rotationSpeed = 0.04;
+    group.add(reactorRing);
+
+    // Reactor glow halo
+    const bossGlowGeo = new THREE.SphereGeometry(2.0, 16, 16);
+    const bossGlowMat = new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+        transparent: true,
+        opacity: 0.08
+    });
+    group.add(new THREE.Mesh(bossGlowGeo, bossGlowMat));
+
+    // Orbiting armor plates
+    const armorGeo = new THREE.BoxGeometry(1.2, 0.15, 2.5);
+    const armorMat = new THREE.MeshStandardMaterial({
+        color: 0x440000,
+        emissive: 0xff0000,
+        emissiveIntensity: 0.3,
+        metalness: 0.95,
+        roughness: 0.2
+    });
+    for (let i = 0; i < 4; i++) {
+        const armor = new THREE.Mesh(armorGeo, armorMat);
+        const angle = (i / 4) * Math.PI * 2;
+        armor.position.set(Math.cos(angle) * 2.8, 0, Math.sin(angle) * 2.8);
+        armor.rotation.y = angle;
+        armor.userData.isBossArmor = true;
+        armor.userData.orbitAngle = angle;
+        armor.userData.orbitSpeed = 0.008;
+        group.add(armor);
+    }
 
     group.scale.set(1.5, 1.5, 1.5);
 
@@ -1216,6 +1311,8 @@ function updateBoss() {
     // Rotation for intimidation
     boss.mesh.rotation.y += 0.01;
     boss.mesh.rotation.z = Math.sin(Date.now() * 0.001) * 0.1;
+
+    animateBossParts();
 
     // Boss shooting logic
     boss.fireTimer--;
@@ -1660,172 +1757,397 @@ function createEnemy(type) {
     const levelMultiplier = 1 + Math.sqrt(currentLevel - 1) * settings.scalingFactor;
 
     if (type === 0) {
-        // Modern Alien Destroyer - Octahedron design
+        // Alien Destroyer - Magenta octahedron with inner energy + orbiting armor
         const group = new THREE.Group();
 
-        // Main core - glowing octahedron
-        const coreGeometry = new THREE.OctahedronGeometry(1.2, 0);
-        const coreMaterial = new THREE.MeshStandardMaterial({
-            color: 0xff00ff,
-            emissive: 0xff00ff,
-            emissiveIntensity: 0.8,
-            metalness: 0.7,
-            roughness: 0.2
-        });
-        const core = new THREE.Mesh(coreGeometry, coreMaterial);
-        group.add(core);
-
-        // Energy rings
-        const ringGeometry = new THREE.TorusGeometry(1.5, 0.1, 8, 16);
-        const ringMaterial = new THREE.MeshBasicMaterial({
-            color: 0xff00ff,
-            transparent: true,
-            opacity: 0.6
-        });
-        const ring1 = new THREE.Mesh(ringGeometry, ringMaterial);
-        ring1.rotation.x = Math.PI / 2;
-        ring1.userData.isRing = true;  // Mark for animation
-        ring1.userData.rotationSpeed = 0.03;
-        group.add(ring1);
-
-        const ring2 = new THREE.Mesh(ringGeometry, ringMaterial);
-        ring2.rotation.y = Math.PI / 2;
-        ring2.userData.isRing = true;  // Mark for animation
-        ring2.userData.rotationSpeed = -0.02;  // Opposite direction
-        group.add(ring2);
-
-        // Glowing core sphere
-        const glowGeometry = new THREE.SphereGeometry(0.6, 12, 12);
-        const glowMaterial = new THREE.MeshBasicMaterial({
+        // Inner energy sphere (visible through transparent core)
+        const innerGeo = new THREE.SphereGeometry(0.7, 16, 16);
+        const innerMat = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
             opacity: 0.9
         });
-        const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-        glow.userData.isPulse = true;  // Mark for pulsing animation
-        group.add(glow);
+        const inner = new THREE.Mesh(innerGeo, innerMat);
+        inner.userData.isPulse = true;
+        group.add(inner);
+
+        // Main core - smooth octahedron (transparent so inner shows)
+        const coreGeo = new THREE.OctahedronGeometry(1.2, 2);
+        const coreMat = new THREE.MeshStandardMaterial({
+            color: 0xff00ff,
+            emissive: 0xff00ff,
+            emissiveIntensity: 0.8,
+            metalness: 0.7,
+            roughness: 0.2,
+            transparent: true,
+            opacity: 0.6
+        });
+        group.add(new THREE.Mesh(coreGeo, coreMat));
+
+        // Outer glow layer
+        const glowGeo = new THREE.SphereGeometry(1.5, 12, 12);
+        const glowMat = new THREE.MeshBasicMaterial({
+            color: 0xff00ff,
+            transparent: true,
+            opacity: 0.08
+        });
+        const coreGlow = new THREE.Mesh(glowGeo, glowMat);
+        coreGlow.userData.isPulse = true;
+        group.add(coreGlow);
+
+        // Energy rings (higher poly)
+        const ringGeo = new THREE.TorusGeometry(1.5, 0.12, 16, 32);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color: 0xff00ff,
+            transparent: true,
+            opacity: 0.6
+        });
+        const ring1 = new THREE.Mesh(ringGeo, ringMat);
+        ring1.rotation.x = Math.PI / 2;
+        ring1.userData.isRing = true;
+        ring1.userData.rotationSpeed = 0.03;
+        group.add(ring1);
+
+        // Inner glow torus inside ring
+        const ringInnerGeo = new THREE.TorusGeometry(1.5, 0.06, 8, 32);
+        const ringInnerMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.4
+        });
+        const ringInner1 = new THREE.Mesh(ringInnerGeo, ringInnerMat);
+        ringInner1.rotation.x = Math.PI / 2;
+        ringInner1.userData.isRing = true;
+        ringInner1.userData.rotationSpeed = 0.03;
+        group.add(ringInner1);
+
+        const ring2 = new THREE.Mesh(ringGeo, ringMat.clone());
+        ring2.rotation.y = Math.PI / 2;
+        ring2.userData.isRing = true;
+        ring2.userData.rotationSpeed = -0.02;
+        group.add(ring2);
+
+        // Antenna spikes at cardinal directions
+        const spikeGeo = new THREE.ConeGeometry(0.08, 0.6, 8);
+        const spikeMat = new THREE.MeshStandardMaterial({
+            color: 0xcc00cc,
+            emissive: 0xff00ff,
+            emissiveIntensity: 0.4,
+            metalness: 0.9,
+            roughness: 0.2
+        });
+        const spikePositions = [
+            { x: 0, y: 1.4, z: 0, rx: 0, rz: 0 },
+            { x: 0, y: -1.4, z: 0, rx: Math.PI, rz: 0 },
+            { x: 1.4, y: 0, z: 0, rx: 0, rz: -Math.PI / 2 },
+            { x: -1.4, y: 0, z: 0, rx: 0, rz: Math.PI / 2 }
+        ];
+        spikePositions.forEach(sp => {
+            const spike = new THREE.Mesh(spikeGeo, spikeMat);
+            spike.position.set(sp.x, sp.y, sp.z);
+            spike.rotation.set(sp.rx, 0, sp.rz);
+            spike.userData.isSpike = true;
+            group.add(spike);
+        });
+
+        // Orbiting armor plates
+        const plateMat = new THREE.MeshStandardMaterial({
+            color: 0x440044,
+            emissive: 0xff00ff,
+            emissiveIntensity: 0.3,
+            metalness: 0.9,
+            roughness: 0.3
+        });
+        for (let i = 0; i < 4; i++) {
+            const plate = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.1, 0.8), plateMat);
+            const angle = (i / 4) * Math.PI * 2;
+            plate.position.set(Math.cos(angle) * 1.4, 0, Math.sin(angle) * 1.4);
+            plate.userData.isArmorPlate = true;
+            plate.userData.orbitAngle = angle;
+            plate.userData.orbitSpeed = 0.015;
+            group.add(plate);
+        }
 
         group.scale.set(0.6, 0.6, 0.6);
+        group.userData.enginePositions = [{ x: 0, y: 0, z: 1.0 }];
         mesh = group;
     } else if (type === 1) {
-        // Modern Interceptor - Angular design
+        // Interceptor - Electric Blue, sleek aerodynamic design
         const group = new THREE.Group();
 
-        // Main body - diamond shape
-        const bodyGeometry = new THREE.ConeGeometry(1.2, 2, 4);
-        const bodyMaterial = new THREE.MeshStandardMaterial({
-            color: 0x00ff00,
-            emissive: 0x00ff00,
-            emissiveIntensity: 0.7,
+        // Smooth fuselage
+        const bodyGeo = new THREE.ConeGeometry(0.8, 2.5, 12);
+        const bodyMat = new THREE.MeshStandardMaterial({
+            color: 0x00aaff,
+            emissive: 0x00aaff,
+            emissiveIntensity: 0.5,
             metalness: 0.8,
             roughness: 0.2
         });
-        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-        body.rotation.x = Math.PI / 2;
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.rotation.x = -Math.PI / 2;
         group.add(body);
 
-        // Wings/Fins
-        const wingGeometry = new THREE.ConeGeometry(0.8, 2, 3);
-        const wingMaterial = new THREE.MeshStandardMaterial({
-            color: 0x00ff00,
-            emissive: 0x00ff00,
-            emissiveIntensity: 0.5,
-            metalness: 0.7,
+        // Cockpit sensor dome at nose
+        const cockpitGeo = new THREE.SphereGeometry(0.35, 12, 12);
+        const cockpitMat = new THREE.MeshStandardMaterial({
+            color: 0x44ccff,
+            emissive: 0x22aaff,
+            emissiveIntensity: 0.6,
+            transparent: true,
+            opacity: 0.7,
+            metalness: 0.9,
+            roughness: 0.1
+        });
+        const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
+        cockpit.scale.set(0.8, 0.5, 1.0);
+        cockpit.position.set(0, 0.2, -1.0);
+        group.add(cockpit);
+
+        // Swept-back wings
+        const wingMat = new THREE.MeshStandardMaterial({
+            color: 0x0066cc,
+            emissive: 0x00aaff,
+            emissiveIntensity: 0.3,
+            metalness: 0.8,
             roughness: 0.3
         });
-        const leftWing = new THREE.Mesh(wingGeometry, wingMaterial);
-        leftWing.rotation.z = Math.PI / 2;
-        leftWing.position.set(-1.5, 0, 0);
-        leftWing.userData.isWing = true;  // Mark for flap animation
+        const wingGeo = new THREE.BoxGeometry(2.0, 0.08, 0.7);
+        const leftWing = new THREE.Mesh(wingGeo, wingMat);
+        leftWing.position.set(-1.2, 0, 0.3);
+        leftWing.rotation.y = -0.3;
+        leftWing.userData.isWing = true;
         leftWing.userData.flapSpeed = 0.05;
         group.add(leftWing);
 
-        const rightWing = new THREE.Mesh(wingGeometry, wingMaterial);
-        rightWing.rotation.z = -Math.PI / 2;
-        rightWing.position.set(1.5, 0, 0);
-        rightWing.userData.isWing = true;  // Mark for flap animation
+        const rightWing = new THREE.Mesh(wingGeo, wingMat);
+        rightWing.position.set(1.2, 0, 0.3);
+        rightWing.rotation.y = 0.3;
+        rightWing.userData.isWing = true;
         rightWing.userData.flapSpeed = 0.05;
         group.add(rightWing);
 
-        // Engine cores
-        const engineGeometry = new THREE.SphereGeometry(0.3, 8, 8);
-        const engineMaterial = new THREE.MeshBasicMaterial({
-            color: 0xff0000,
-            transparent: true,
-            opacity: 0.9
+        // Wing panel lines
+        const panelGeo = new THREE.BoxGeometry(1.4, 0.005, 0.02);
+        const panelMat = new THREE.MeshBasicMaterial({ color: 0x0088cc });
+        [-0.15, 0.15].forEach(zOff => {
+            const lp = new THREE.Mesh(panelGeo, panelMat);
+            lp.position.set(-1.2, 0.05, 0.3 + zOff);
+            lp.rotation.y = -0.3;
+            group.add(lp);
+            const rp = new THREE.Mesh(panelGeo, panelMat);
+            rp.position.set(1.2, 0.05, 0.3 + zOff);
+            rp.rotation.y = 0.3;
+            group.add(rp);
         });
-        const leftEngine = new THREE.Mesh(engineGeometry, engineMaterial);
-        leftEngine.position.set(-0.6, 0, -1);
-        leftEngine.userData.isPulse = true;  // Mark for pulsing
-        const rightEngine = new THREE.Mesh(engineGeometry, engineMaterial);
-        rightEngine.position.set(0.6, 0, -1);
-        rightEngine.userData.isPulse = true;  // Mark for pulsing
-        group.add(leftEngine, rightEngine);
 
-        group.scale.set(0.6, 0.6, 0.6);
-        mesh = group;
-    } else {
-        // Modern Battlecruiser - Heavy design
-        const group = new THREE.Group();
+        // Tail fin
+        const finGeo = new THREE.BoxGeometry(0.06, 0.5, 0.4);
+        const fin = new THREE.Mesh(finGeo, wingMat);
+        fin.position.set(0, 0.3, 1.0);
+        group.add(fin);
 
-        // Main hull - thick disk
-        const hullGeometry = new THREE.CylinderGeometry(2.2, 2.5, 0.8, 16);
-        const hullMaterial = new THREE.MeshStandardMaterial({
-            color: 0xff6600,
-            emissive: 0xff6600,
+        // Engine nozzles with inner glow
+        const nozzleGeo = new THREE.CylinderGeometry(0.18, 0.22, 0.4, 12);
+        const nozzleMat = new THREE.MeshStandardMaterial({
+            color: 0x333333,
+            emissive: 0x00aaff,
             emissiveIntensity: 0.6,
             metalness: 0.9,
             roughness: 0.2
         });
-        const hull = new THREE.Mesh(hullGeometry, hullMaterial);
-        group.add(hull);
+        const engineGlowGeo = new THREE.SphereGeometry(0.18, 12, 12);
+        const engineGlowMat = new THREE.MeshBasicMaterial({
+            color: 0xff3300,
+            transparent: true,
+            opacity: 0.9
+        });
+        [{ x: -0.6 }, { x: 0.6 }].forEach(pos => {
+            const nozzle = new THREE.Mesh(nozzleGeo, nozzleMat);
+            nozzle.position.set(pos.x, 0, 1.1);
+            nozzle.rotation.x = Math.PI / 2;
+            group.add(nozzle);
+            const glow = new THREE.Mesh(engineGlowGeo, engineGlowMat);
+            glow.position.set(pos.x, 0, 1.3);
+            glow.userData.isPulse = true;
+            group.add(glow);
+        });
 
-        // Energy dome
-        const domeGeometry = new THREE.SphereGeometry(1.5, 12, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-        const domeMaterial = new THREE.MeshStandardMaterial({
-            color: 0x00ffff,
-            emissive: 0x00ffff,
+        // Engine halos
+        const haloGeo = new THREE.SphereGeometry(0.35, 8, 8);
+        const haloMat = new THREE.MeshBasicMaterial({
+            color: 0x00aaff,
+            transparent: true,
+            opacity: 0.1
+        });
+        [{ x: -0.6 }, { x: 0.6 }].forEach(pos => {
+            const halo = new THREE.Mesh(haloGeo, haloMat);
+            halo.position.set(pos.x, 0, 1.3);
+            halo.userData.isPulse = true;
+            group.add(halo);
+        });
+
+        group.scale.set(0.6, 0.6, 0.6);
+        group.userData.enginePositions = [
+            { x: -0.6, y: 0, z: 1.3 },
+            { x: 0.6, y: 0, z: 1.3 }
+        ];
+        mesh = group;
+    } else {
+        // Battlecruiser - Gunmetal hull with Gold accents
+        const group = new THREE.Group();
+
+        // Main hull
+        const hullGeo = new THREE.CylinderGeometry(2.2, 2.5, 0.8, 24);
+        const hullMat = new THREE.MeshStandardMaterial({
+            color: 0x556677,
+            emissive: 0x334455,
+            emissiveIntensity: 0.3,
+            metalness: 0.9,
+            roughness: 0.2
+        });
+        group.add(new THREE.Mesh(hullGeo, hullMat));
+
+        // Upper hull panel
+        const panelGeo = new THREE.CylinderGeometry(1.8, 2.0, 0.3, 24);
+        const panelMat = new THREE.MeshStandardMaterial({
+            color: 0x445566,
+            emissive: 0x334455,
+            emissiveIntensity: 0.2,
+            metalness: 0.9,
+            roughness: 0.3
+        });
+        const panel = new THREE.Mesh(panelGeo, panelMat);
+        panel.position.y = 0.4;
+        group.add(panel);
+
+        // Gold energy dome
+        const domeGeo = new THREE.SphereGeometry(1.5, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+        const domeMat = new THREE.MeshStandardMaterial({
+            color: 0xffcc33,
+            emissive: 0xffcc33,
             emissiveIntensity: 0.8,
             metalness: 0.9,
             roughness: 0.1,
             transparent: true,
             opacity: 0.7
         });
-        const dome = new THREE.Mesh(domeGeometry, domeMaterial);
+        const dome = new THREE.Mesh(domeGeo, domeMat);
         dome.position.y = -0.4;
         group.add(dome);
 
-        // Weapon hardpoints
-        const weaponGeometry = new THREE.BoxGeometry(0.3, 0.6, 0.3);
-        const weaponMaterial = new THREE.MeshStandardMaterial({
+        // Antenna on dome
+        const antennaGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.6, 6);
+        const antennaMat = new THREE.MeshStandardMaterial({
+            color: 0x888888,
+            metalness: 0.9,
+            roughness: 0.2
+        });
+        const antenna = new THREE.Mesh(antennaGeo, antennaMat);
+        antenna.position.set(0, -1.1, 0);
+        group.add(antenna);
+        const antTipGeo = new THREE.SphereGeometry(0.06, 8, 8);
+        const antTipMat = new THREE.MeshBasicMaterial({ color: 0xffcc33, transparent: true, opacity: 0.9 });
+        const antTip = new THREE.Mesh(antTipGeo, antTipMat);
+        antTip.position.set(0, -1.4, 0);
+        antTip.userData.isPulse = true;
+        group.add(antTip);
+
+        // Turret hardpoints (mount + barrel + tip glow)
+        const mountGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.2, 12);
+        const mountMat = new THREE.MeshStandardMaterial({
             color: 0x333333,
-            emissive: 0xff0000,
-            emissiveIntensity: 0.5,
+            emissive: 0xffcc33,
+            emissiveIntensity: 0.4,
             metalness: 0.9
         });
+        const barrelGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 8);
+        const barrelMat = new THREE.MeshStandardMaterial({
+            color: 0x444444,
+            metalness: 0.9,
+            roughness: 0.2
+        });
+        const tipGeo = new THREE.SphereGeometry(0.08, 8, 8);
+        const tipMat = new THREE.MeshBasicMaterial({
+            color: 0xff4400,
+            transparent: true,
+            opacity: 0.8
+        });
         for (let i = 0; i < 4; i++) {
-            const weapon = new THREE.Mesh(weaponGeometry, weaponMaterial);
+            const turret = new THREE.Group();
+            turret.add(new THREE.Mesh(mountGeo, mountMat));
+            const barrel = new THREE.Mesh(barrelGeo, barrelMat);
+            barrel.rotation.z = Math.PI / 2;
+            barrel.position.x = 0.35;
+            turret.add(barrel);
+            const tip = new THREE.Mesh(tipGeo, tipMat);
+            tip.position.x = 0.6;
+            tip.userData.isTurretTip = true;
+            turret.add(tip);
+
             const angle = (i / 4) * Math.PI * 2;
-            weapon.position.set(Math.cos(angle) * 2, -0.5, Math.sin(angle) * 2);
-            weapon.userData.isWeapon = true;  // Mark for rotation animation
-            weapon.userData.weaponAngle = angle;
-            weapon.userData.rotationSpeed = 0.02;
-            group.add(weapon);
+            turret.position.set(Math.cos(angle) * 2, -0.5, Math.sin(angle) * 2);
+            turret.userData.isWeapon = true;
+            turret.userData.weaponAngle = angle;
+            turret.userData.rotationSpeed = 0.02;
+            group.add(turret);
         }
 
-        // Core reactor glow
-        const reactorGeometry = new THREE.CylinderGeometry(0.8, 0.8, 0.2, 16);
-        const reactorMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffff00,
+        // Core reactor
+        const reactorGeo = new THREE.CylinderGeometry(0.8, 0.8, 0.25, 24);
+        const reactorMat = new THREE.MeshBasicMaterial({
+            color: 0xffcc33,
             transparent: true,
             opacity: 0.9
         });
-        const reactor = new THREE.Mesh(reactorGeometry, reactorMaterial);
+        const reactor = new THREE.Mesh(reactorGeo, reactorMat);
         reactor.position.y = -0.3;
-        reactor.userData.isPulse = true;  // Mark for pulsing
+        reactor.userData.isPulse = true;
         group.add(reactor);
 
+        // Reactor glow layer
+        const rGlowGeo = new THREE.SphereGeometry(1.2, 12, 12);
+        const rGlowMat = new THREE.MeshBasicMaterial({
+            color: 0xffcc33,
+            transparent: true,
+            opacity: 0.1
+        });
+        const rGlow = new THREE.Mesh(rGlowGeo, rGlowMat);
+        rGlow.position.y = -0.3;
+        rGlow.userData.isPulse = true;
+        group.add(rGlow);
+
+        // Rear engine nozzles
+        const engNozzleGeo = new THREE.CylinderGeometry(0.12, 0.15, 0.3, 10);
+        const engNozzleMat = new THREE.MeshStandardMaterial({
+            color: 0x333333,
+            emissive: 0xffcc33,
+            emissiveIntensity: 0.5,
+            metalness: 0.9
+        });
+        const engGlowGeo = new THREE.SphereGeometry(0.1, 8, 8);
+        const engGlowMat = new THREE.MeshBasicMaterial({
+            color: 0xffaa00,
+            transparent: true,
+            opacity: 0.9
+        });
+        [-0.6, 0, 0.6].forEach(xPos => {
+            const nozzle = new THREE.Mesh(engNozzleGeo, engNozzleMat);
+            nozzle.position.set(xPos, 0, 1.3);
+            nozzle.rotation.x = Math.PI / 2;
+            group.add(nozzle);
+            const glow = new THREE.Mesh(engGlowGeo, engGlowMat);
+            glow.position.set(xPos, 0, 1.5);
+            glow.userData.isPulse = true;
+            group.add(glow);
+        });
+
         group.scale.set(0.5, 0.5, 0.5);
+        group.userData.enginePositions = [
+            { x: -0.6, y: 0, z: 1.5 },
+            { x: 0, y: 0, z: 1.5 },
+            { x: 0.6, y: 0, z: 1.5 }
+        ];
         mesh = group;
     }
 
@@ -1853,7 +2175,7 @@ function createEnemy(type) {
 
     // Add point light to enemy
     const light = new THREE.PointLight(
-        type === 0 ? 0xff00ff : type === 1 ? 0x00ff00 : 0xff6600,
+        type === 0 ? 0xff00ff : type === 1 ? 0x00aaff : 0xffcc33,
         3,
         15
     );
@@ -1867,24 +2189,17 @@ function createEnemy(type) {
 // Procedural animations for enemy parts
 function animateEnemyParts(enemy) {
     enemy.mesh.traverse((child) => {
-        // Rotate rings (Type 0 - Destroyer)
         if (child.userData.isRing) {
             child.rotation.z += child.userData.rotationSpeed;
         }
-
-        // Pulse glowing parts (all types)
-        if (child.userData.isPulse) {
+        if (child.userData.isPulse && !child.userData.isCharging) {
             const pulse = Math.sin(Date.now() * 0.005) * 0.15 + 1;
             child.scale.set(pulse, pulse, pulse);
         }
-
-        // Flap wings (Type 1 - Interceptor)
         if (child.userData.isWing) {
             const flap = Math.sin(Date.now() * child.userData.flapSpeed) * 0.2;
             child.rotation.y = flap;
         }
-
-        // Rotate weapon arrays (Type 2 - Battlecruiser)
         if (child.userData.isWeapon) {
             child.userData.weaponAngle += child.userData.rotationSpeed;
             child.position.set(
@@ -1892,6 +2207,39 @@ function animateEnemyParts(enemy) {
                 -0.5,
                 Math.sin(child.userData.weaponAngle) * 2
             );
+        }
+        if (child.userData.isSpike) {
+            const bob = Math.sin(Date.now() * 0.008 + child.position.x * 10) * 0.03;
+            child.position.y += bob;
+        }
+        if (child.userData.isArmorPlate) {
+            child.userData.orbitAngle += child.userData.orbitSpeed;
+            child.position.x = Math.cos(child.userData.orbitAngle) * 1.4;
+            child.position.z = Math.sin(child.userData.orbitAngle) * 1.4;
+        }
+    });
+}
+
+function animateBossParts() {
+    if (!boss || !boss.mesh) return;
+    boss.mesh.traverse((child) => {
+        if (child.userData.isBossShield) {
+            child.rotation.y += 0.005;
+            child.rotation.x += 0.003;
+            child.material.opacity = 0.12 + Math.sin(Date.now() * 0.002) * 0.05;
+        }
+        if (child.userData.isBossArmor) {
+            child.userData.orbitAngle += child.userData.orbitSpeed;
+            child.position.x = Math.cos(child.userData.orbitAngle) * 2.8;
+            child.position.z = Math.sin(child.userData.orbitAngle) * 2.8;
+            child.rotation.y = child.userData.orbitAngle;
+        }
+        if (child.userData.isRing) {
+            child.rotation.z += child.userData.rotationSpeed;
+        }
+        if (child.userData.isPulse) {
+            const pulse = Math.sin(Date.now() * 0.006) * 0.12 + 1;
+            child.scale.set(pulse, pulse, pulse);
         }
     });
 }
@@ -1948,16 +2296,34 @@ function updateEnemies() {
             enemy.waveOffset = 0;  // Reset wave to move forward
         }
 
-        // Smooth rotation for visual effect
-        enemy.mesh.rotation.y += 0.02;
+        // Smooth rotation for visual effect (skip Y spin for Interceptor — shuttle shape)
+        if (enemy.type !== 1) {
+            enemy.mesh.rotation.y += 0.02;
+        }
         enemy.mesh.rotation.z = Math.sin(enemy.waveOffset) * 0.1;  // Slight roll with wave
 
         // Animate enemy parts (rings, wings, weapons)
         animateEnemyParts(enemy);
 
-        // Enemy shooting logic
+        // Enemy shooting logic with charging VFX
         if (enemy.mesh.position.z > player.z && enemy.mesh.position.z < 65) {
             enemy.fireTimer--;
+
+            // Weapon charging VFX (15 frames before firing)
+            if (enemy.fireTimer <= 15 && enemy.fireTimer > 0) {
+                const chargeProgress = 1 - (enemy.fireTimer / 15);
+                enemy.mesh.traverse((child) => {
+                    if (child.userData.isPulse || child.userData.isTurretTip) {
+                        child.userData.isCharging = true;
+                        const chargeScale = 1 + chargeProgress * 0.25;
+                        child.scale.set(chargeScale, chargeScale, chargeScale);
+                        if (child.material && child.material.emissiveIntensity !== undefined) {
+                            child.material.emissiveIntensity = 0.5 + chargeProgress * 0.5;
+                        }
+                    }
+                });
+            }
+
             if (enemy.fireTimer <= 0) {
                 createEnemyBullet(
                     enemy.mesh.position.x,
@@ -1970,6 +2336,13 @@ function updateEnemies() {
                 );
                 playEnemyShootSound();
                 enemy.fireTimer = enemy.fireInterval;
+
+                // Reset charging state
+                enemy.mesh.traverse((child) => {
+                    if (child.userData.isCharging) {
+                        child.userData.isCharging = false;
+                    }
+                });
             }
         }
 
@@ -2015,12 +2388,23 @@ function checkCollisions() {
 
                 // Start death animation instead of immediate removal
                 enemy.dying = true;
-                enemy.deathTimer = 20;  // Spin out over 20 frames
+                enemy.deathTimer = 20;
                 enemy.deathSpin = new THREE.Vector3(
                     (Math.random() - 0.5) * 0.3,
                     (Math.random() - 0.5) * 0.3,
                     (Math.random() - 0.5) * 0.3
                 );
+
+                // Hit flash
+                enemy.mesh.traverse((child) => {
+                    if (child.material && child.material.emissive) {
+                        const orig = child.material.emissiveIntensity;
+                        child.material.emissiveIntensity = 2.0;
+                        setTimeout(() => {
+                            if (child.material) child.material.emissiveIntensity = orig;
+                        }, 100);
+                    }
+                });
 
                 score += difficultySettings[difficulty].enemyPoints * currentLevel;  // More points at higher levels
                 updateScore();
@@ -2264,6 +2648,63 @@ function updateEngineParticles() {
     }
 }
 
+// Enemy Engine Trail Particles
+function createEnemyEngineParticles() {
+    const colors = {
+        0: [0xff00ff, 0xff66ff],
+        1: [0x00aaff, 0x66ccff],
+        2: [0xffcc33, 0xffdd66]
+    };
+    for (let i = 0; i < enemies.length; i++) {
+        const enemy = enemies[i];
+        if (enemy.dying) continue;
+        const positions = enemy.mesh.userData.enginePositions;
+        if (!positions) continue;
+        const typeColors = colors[enemy.type] || colors[0];
+        const scale = enemy.type === 2 ? 0.5 : 0.6;
+
+        positions.forEach(offset => {
+            const geo = new THREE.SphereGeometry(0.1, 6, 6);
+            const mat = new THREE.MeshBasicMaterial({
+                color: Math.random() > 0.4 ? typeColors[0] : typeColors[1],
+                transparent: true,
+                opacity: 0.7
+            });
+            const p = new THREE.Mesh(geo, mat);
+            const worldPos = new THREE.Vector3(
+                offset.x * scale, offset.y * scale, offset.z * scale
+            );
+            worldPos.applyQuaternion(enemy.mesh.quaternion);
+            worldPos.add(enemy.mesh.position);
+            p.position.copy(worldPos);
+            scene.add(p);
+            enemyEngineParticles.push({
+                mesh: p,
+                velocity: new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.06,
+                    (Math.random() - 0.5) * 0.06,
+                    0.25
+                ),
+                life: 10
+            });
+        });
+    }
+}
+
+function updateEnemyEngineParticles() {
+    for (let i = enemyEngineParticles.length - 1; i >= 0; i--) {
+        const p = enemyEngineParticles[i];
+        p.mesh.position.add(p.velocity);
+        p.life--;
+        p.mesh.material.opacity = (p.life / 10) * 0.7;
+        p.mesh.scale.multiplyScalar(0.93);
+        if (p.life <= 0) {
+            scene.remove(p.mesh);
+            enemyEngineParticles.splice(i, 1);
+        }
+    }
+}
+
 // Stars — multi-layer with twinkling
 function createStars() {
     const layers = [];
@@ -2445,9 +2886,11 @@ function endGame() {
         levelTransitionTimeout = null;
     }
 
-    // Clean up enemy bullets
+    // Clean up enemy bullets and engine particles
     enemyBullets.forEach(b => scene.remove(b.mesh));
     enemyBullets = [];
+    enemyEngineParticles.forEach(p => scene.remove(p.mesh));
+    enemyEngineParticles = [];
 
     playGameOverSound();  // Play game over sound
 
@@ -2504,6 +2947,8 @@ function startGame() {
     engineParticles = [];
     enemyBullets.forEach(b => scene.remove(b.mesh));
     enemyBullets = [];
+    enemyEngineParticles.forEach(p => scene.remove(p.mesh));
+    enemyEngineParticles = [];
     enemyLights = [];
 
     // Clean up portal if exists
@@ -2607,10 +3052,16 @@ function gameLoop(timestamp = 0) {
             createEngineParticles();
             engineParticleCounter = 0;
         }
+        enemyEngineParticleCounter++;
+        if (enemyEngineParticleCounter >= 4) {
+            createEnemyEngineParticles();
+            enemyEngineParticleCounter = 0;
+        }
     }
 
     updateParticles();
     updateEngineParticles();
+    updateEnemyEngineParticles();
     starField.update();
     updatePortal();
     updateCameraShake();
