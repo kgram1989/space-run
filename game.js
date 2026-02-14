@@ -1,3 +1,17 @@
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyARY6XkSmmu8DsTgKwDHqoWrOXlwd3pvB4",
+  authDomain: "space-run-6c91e.firebaseapp.com",
+  databaseURL: "https://space-run-6c91e-default-rtdb.firebaseio.com",
+  projectId: "space-run-6c91e",
+  storageBucket: "space-run-6c91e.firebasestorage.app",
+  messagingSenderId: "676180652992",
+  appId: "1:676180652992:web:ab390e1b520ccd13da4e25",
+  measurementId: "G-1N0H66MFK6"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
 // Three.js Setup
 const canvas = document.getElementById('gameCanvas');
 const scoreElement = document.getElementById('score');
@@ -2836,23 +2850,39 @@ function loadLevelTheme(levelNumber) {
 
 // Lane indicators removed - better options below
 
-// High Score System
-function loadHighScores() {
+// High Score System — Firebase with localStorage fallback
+function loadLocalHighScores() {
     const saved = localStorage.getItem('spaceShooterHighScores');
     return saved ? JSON.parse(saved) : [];
 }
 
-function saveHighScores(scores) {
-    localStorage.setItem('spaceShooterHighScores', JSON.stringify(scores));
+async function loadHighScores() {
+    try {
+        const snapshot = await db.ref('highScores').once('value');
+        if (!snapshot.exists()) {
+            return loadLocalHighScores();
+        }
+        const scores = [];
+        snapshot.forEach(child => {
+            scores.push(child.val());
+        });
+        scores.sort((a, b) => b.score - a.score);
+        scores.splice(5);
+        localStorage.setItem('spaceShooterHighScores', JSON.stringify(scores));
+        return scores;
+    } catch (e) {
+        console.warn('Firebase read failed, using localStorage:', e.message);
+        return loadLocalHighScores();
+    }
 }
 
-function getHighScore() {
-    const highScores = loadHighScores();
+async function getHighScore() {
+    const highScores = await loadHighScores();
     return highScores.length > 0 ? highScores[0].score : 0;
 }
 
-function updateHighScoreDisplay() {
-    const highScore = getHighScore();
+async function updateHighScoreDisplay() {
+    const highScore = await getHighScore();
     if (highScoreElement) {
         highScoreElement.textContent = highScore;
     }
@@ -2882,19 +2912,44 @@ function initializeBriefingScreen() {
     });
 }
 
-function isTopScore(score) {
-    const highScores = loadHighScores();
+async function isTopScore(score) {
+    const highScores = await loadHighScores();
     return highScores.length < 5 || score > highScores[highScores.length - 1].score;
 }
 
-function addHighScore(name, score, difficulty) {
-    const highScores = loadHighScores();
-    highScores.push({ name, score, difficulty, date: new Date().toLocaleDateString() });
-    highScores.sort((a, b) => b.score - a.score);
-    highScores.splice(5);  // Keep only top 5
-    saveHighScores(highScores);
-    updateHighScoreDisplay();  // Update display when scores change
-    return highScores;
+async function addHighScore(name, score, difficulty) {
+    const entry = { name, score, difficulty, date: new Date().toLocaleDateString() };
+
+    // Always save to localStorage first so scores are never lost
+    const localScores = loadLocalHighScores();
+    localScores.push(entry);
+    localScores.sort((a, b) => b.score - a.score);
+    localScores.splice(5);
+    localStorage.setItem('spaceShooterHighScores', JSON.stringify(localScores));
+
+    // Then try to sync to Firebase
+    try {
+        await db.ref('highScores').push(entry);
+        // Prune: keep only the top 5 by removing lowest scores
+        const allSnapshot = await db.ref('highScores').once('value');
+        const allEntries = [];
+        allSnapshot.forEach(child => {
+            allEntries.push({ key: child.key, score: child.val().score });
+        });
+        if (allEntries.length > 5) {
+            allEntries.sort((a, b) => a.score - b.score);
+            const toRemove = allEntries.slice(0, allEntries.length - 5);
+            const updates = {};
+            toRemove.forEach(e => { updates[e.key] = null; });
+            await db.ref('highScores').update(updates);
+        }
+    } catch (e) {
+        console.warn('Firebase write failed, scores saved locally:', e.message);
+    }
+
+    const result = await loadHighScores();
+    await updateHighScoreDisplay();
+    return result;
 }
 
 // Update UI
@@ -2937,7 +2992,7 @@ function togglePause() {
 }
 
 // Game Over
-function endGame() {
+async function endGame() {
     gameRunning = false;
 
     // Cancel any ongoing animations and timers
@@ -2963,14 +3018,16 @@ function endGame() {
     gameDifficultyElement.textContent = difficulty.toUpperCase();
 
     // Check for high score
-    if (isTopScore(score)) {
-        const playerName = prompt('🏆 TOP 5 SCORE! Enter your name:', 'Player');
+    if (await isTopScore(score)) {
+        const playerName = prompt('TOP 5 SCORE! Enter your name:', 'Player');
         if (playerName) {
-            const highScores = addHighScore(playerName.substring(0, 20), score, difficulty);
+            const highScores = await addHighScore(playerName.substring(0, 20), score, difficulty);
             displayHighScores(highScores);
+        } else {
+            displayHighScores(await loadHighScores());
         }
     } else {
-        displayHighScores(loadHighScores());
+        displayHighScores(await loadHighScores());
     }
 
     gameOverScreen.classList.remove('hidden');
