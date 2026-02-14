@@ -1160,9 +1160,9 @@ function createBoss() {
     // Smooth core (2 subdivisions = 128 faces)
     const coreGeo = new THREE.OctahedronGeometry(3, 2);
     const coreMat = new THREE.MeshStandardMaterial({
-        color: 0xff0000,
-        emissive: 0xff0000,
-        emissiveIntensity: 1.0,
+        color: 0x8b0000,
+        emissive: 0x660000,
+        emissiveIntensity: 0.8,
         metalness: 0.9,
         roughness: 0.1
     });
@@ -1171,9 +1171,9 @@ function createBoss() {
     // Energy shield sphere (smoother)
     const shieldGeo = new THREE.SphereGeometry(4, 24, 24);
     const shieldMat = new THREE.MeshStandardMaterial({
-        color: 0xff0000,
-        emissive: 0xff0000,
-        emissiveIntensity: 0.5,
+        color: 0x660000,
+        emissive: 0x550000,
+        emissiveIntensity: 0.4,
         transparent: true,
         opacity: 0.3,
         metalness: 0.9,
@@ -1184,10 +1184,10 @@ function createBoss() {
     // Hex wireframe shield overlay
     const bossWireGeo = new THREE.IcosahedronGeometry(4.2, 1);
     const bossWireMat = new THREE.MeshBasicMaterial({
-        color: 0xff4444,
+        color: 0x992222,
         wireframe: true,
         transparent: true,
-        opacity: 0.15
+        opacity: 0.12
     });
     const bossWireframe = new THREE.Mesh(bossWireGeo, bossWireMat);
     bossWireframe.userData.isBossShield = true;
@@ -1197,21 +1197,21 @@ function createBoss() {
     const heavyMountGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
     const heavyBarrelGeo = new THREE.CylinderGeometry(0.15, 0.2, 2.0, 10);
     const heavyMat = new THREE.MeshStandardMaterial({
-        color: 0x220000,
-        emissive: 0xff0000,
-        emissiveIntensity: 0.6,
+        color: 0x1a0000,
+        emissive: 0x880000,
+        emissiveIntensity: 0.5,
         metalness: 1.0
     });
     const lanceGeo = new THREE.ConeGeometry(0.2, 2.5, 8);
     const lanceMat = new THREE.MeshStandardMaterial({
-        color: 0x000000,
-        emissive: 0xff0000,
-        emissiveIntensity: 0.8,
+        color: 0x0a0000,
+        emissive: 0x770000,
+        emissiveIntensity: 0.6,
         metalness: 1.0
     });
     const lanceTipGeo = new THREE.SphereGeometry(0.15, 8, 8);
     const lanceTipMat = new THREE.MeshBasicMaterial({
-        color: 0xffff00,
+        color: 0xcc6600,
         transparent: true,
         opacity: 0.8
     });
@@ -1245,9 +1245,9 @@ function createBoss() {
     // Layered reactor: outer glow + inner core + energy ring
     const reactorOuterGeo = new THREE.SphereGeometry(1.5, 24, 24);
     const reactorOuterMat = new THREE.MeshBasicMaterial({
-        color: 0xffff00,
+        color: 0xcc4400,
         transparent: true,
-        opacity: 0.5
+        opacity: 0.4
     });
     const reactorOuter = new THREE.Mesh(reactorOuterGeo, reactorOuterMat);
     reactorOuter.userData.isPulse = true;
@@ -1255,9 +1255,9 @@ function createBoss() {
 
     const reactorInnerGeo = new THREE.SphereGeometry(0.8, 16, 16);
     const reactorInnerMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
+        color: 0xffccaa,
         transparent: true,
-        opacity: 0.9
+        opacity: 0.85
     });
     const reactorInner = new THREE.Mesh(reactorInnerGeo, reactorInnerMat);
     reactorInner.userData.isPulse = true;
@@ -1265,9 +1265,9 @@ function createBoss() {
 
     const reactorRingGeo = new THREE.TorusGeometry(1.1, 0.06, 12, 24);
     const reactorRingMat = new THREE.MeshBasicMaterial({
-        color: 0xff6600,
+        color: 0x993300,
         transparent: true,
-        opacity: 0.7
+        opacity: 0.6
     });
     const reactorRing = new THREE.Mesh(reactorRingGeo, reactorRingMat);
     reactorRing.userData.isRing = true;
@@ -1277,18 +1277,18 @@ function createBoss() {
     // Reactor glow halo
     const bossGlowGeo = new THREE.SphereGeometry(2.0, 16, 16);
     const bossGlowMat = new THREE.MeshBasicMaterial({
-        color: 0xff0000,
+        color: 0x660000,
         transparent: true,
-        opacity: 0.08
+        opacity: 0.06
     });
     group.add(new THREE.Mesh(bossGlowGeo, bossGlowMat));
 
     // Orbiting armor plates
     const armorGeo = new THREE.BoxGeometry(1.2, 0.15, 2.5);
     const armorMat = new THREE.MeshStandardMaterial({
-        color: 0x440000,
-        emissive: 0xff0000,
-        emissiveIntensity: 0.3,
+        color: 0x220000,
+        emissive: 0x550000,
+        emissiveIntensity: 0.25,
         metalness: 0.95,
         roughness: 0.2
     });
@@ -1324,8 +1324,8 @@ function createBoss() {
     boss.mesh.position.set(0, -5, 70);
     boss.mesh.castShadow = !isMobile;
 
-    // Add massive red point light
-    const light = new THREE.PointLight(0xff0000, 5, 25);
+    // Add deep red point light
+    const light = new THREE.PointLight(0x880000, 4, 25);
     boss.mesh.add(light);
 
     scene.add(boss.mesh);
