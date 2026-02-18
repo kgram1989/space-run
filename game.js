@@ -63,50 +63,135 @@ const bloomPass = new THREE.UnrealBloomPass(
 );
 composer.addPass(bloomPass);
 
-let gameRunning = false;
-let gamePaused = false;
-let score = 0;
-let lives = 3;
-let animationId;
-let difficulty = 'medium';
-let targetsHit = 0;  // Track targets hit for life bonus
-let currentLevel = 1;
-let enemiesDefeatedThisLevel = 0;
-let enemiesRequiredForBoss = 10;  // Enemies needed to trigger boss
-let bossActive = false;
-let boss = null;
-let levelTransitioning = false;  // Prevent spawning during level transition
-let portal = null;
-let portalAnimating = false;
-let portalAnimationId = null;
-let levelTransitionTimeout = null;
-let tiltAmount = 0; // -1 (full left) to +1 (full right), 0 = no tilt
-let lastShotTime = 0;
-let pickups = [];
-let lastDropType = null;
-let weaponAmmo = { spread: 0 };
+// Centralized mutable runtime state (single-file architecture cleanup).
+const gameState = {
+    runtime: {
+        gameRunning: false,
+        gamePaused: false,
+        animationId: null,
+        difficulty: 'medium',
+        score: 0,
+        lives: 3,
+        targetsHit: 0
+    },
+    progression: {
+        currentLevel: 1,
+        enemiesDefeatedThisLevel: 0,
+        enemiesRequiredForBoss: 10,
+        bossActive: false,
+        levelTransitioning: false
+    },
+    entities: {
+        boss: null,
+        portal: null,
+        portalAnimating: false,
+        pickups: [],
+        bullets: [],
+        enemies: [],
+        particles: [],
+        enemyLights: [],
+        engineParticles: [],
+        enemyBullets: [],
+        enemyEngineParticles: []
+    },
+    weapon: {
+        lastShotTime: 0,
+        lastDropType: null,
+        weaponAmmo: { spread: 0 }
+    },
+    timers: {
+        portalAnimationId: null,
+        levelTransitionTimeout: null,
+        enemyEngineParticleCounter: 0,
+        lastEnemySpawn: 0,
+        engineParticleCounter: 0
+    },
+    input: {
+        tiltAmount: 0,
+        keys: {},
+        tiltEnabled: false,
+        tiltCalibrated: false,
+        tiltBaseValue: 0
+    },
+    audio: {
+        isMuted: false,
+        masterOutputConnected: true
+    },
+    effects: {
+        cameraShake: {
+            intensity: 0,
+            decay: 0.9,
+            offsetX: 0,
+            offsetY: 0,
+            offsetZ: 0
+        },
+        cinematicCamera: {
+            active: false,
+            type: null,  // 'boss_defeat' or 'portal_zoom'
+            progress: 0,
+            duration: 0,
+            startPos: { x: 0, y: 0, z: 0 },
+            targetPos: { x: 0, y: 0, z: 0 },
+            lookAtTarget: { x: 0, y: 0, z: 0 }
+        }
+    }
+};
+
+function bindStateAlias(name, target, key) {
+    Object.defineProperty(globalThis, name, {
+        get() {
+            return target[key];
+        },
+        set(value) {
+            target[key] = value;
+        },
+        configurable: true
+    });
+}
+
+bindStateAlias('gameRunning', gameState.runtime, 'gameRunning');
+bindStateAlias('gamePaused', gameState.runtime, 'gamePaused');
+bindStateAlias('score', gameState.runtime, 'score');
+bindStateAlias('lives', gameState.runtime, 'lives');
+bindStateAlias('animationId', gameState.runtime, 'animationId');
+bindStateAlias('difficulty', gameState.runtime, 'difficulty');
+bindStateAlias('targetsHit', gameState.runtime, 'targetsHit');
+bindStateAlias('currentLevel', gameState.progression, 'currentLevel');
+bindStateAlias('enemiesDefeatedThisLevel', gameState.progression, 'enemiesDefeatedThisLevel');
+bindStateAlias('enemiesRequiredForBoss', gameState.progression, 'enemiesRequiredForBoss');
+bindStateAlias('bossActive', gameState.progression, 'bossActive');
+bindStateAlias('levelTransitioning', gameState.progression, 'levelTransitioning');
+bindStateAlias('boss', gameState.entities, 'boss');
+bindStateAlias('portal', gameState.entities, 'portal');
+bindStateAlias('portalAnimating', gameState.entities, 'portalAnimating');
+bindStateAlias('pickups', gameState.entities, 'pickups');
+bindStateAlias('bullets', gameState.entities, 'bullets');
+bindStateAlias('enemies', gameState.entities, 'enemies');
+bindStateAlias('particles', gameState.entities, 'particles');
+bindStateAlias('enemyLights', gameState.entities, 'enemyLights');
+bindStateAlias('engineParticles', gameState.entities, 'engineParticles');
+bindStateAlias('enemyBullets', gameState.entities, 'enemyBullets');
+bindStateAlias('enemyEngineParticles', gameState.entities, 'enemyEngineParticles');
+bindStateAlias('lastShotTime', gameState.weapon, 'lastShotTime');
+bindStateAlias('lastDropType', gameState.weapon, 'lastDropType');
+bindStateAlias('weaponAmmo', gameState.weapon, 'weaponAmmo');
+bindStateAlias('portalAnimationId', gameState.timers, 'portalAnimationId');
+bindStateAlias('levelTransitionTimeout', gameState.timers, 'levelTransitionTimeout');
+bindStateAlias('enemyEngineParticleCounter', gameState.timers, 'enemyEngineParticleCounter');
+bindStateAlias('lastEnemySpawn', gameState.timers, 'lastEnemySpawn');
+bindStateAlias('engineParticleCounter', gameState.timers, 'engineParticleCounter');
+bindStateAlias('tiltAmount', gameState.input, 'tiltAmount');
+bindStateAlias('tiltEnabled', gameState.input, 'tiltEnabled');
+bindStateAlias('tiltCalibrated', gameState.input, 'tiltCalibrated');
+bindStateAlias('tiltBaseValue', gameState.input, 'tiltBaseValue');
+bindStateAlias('isMuted', gameState.audio, 'isMuted');
+bindStateAlias('masterOutputConnected', gameState.audio, 'masterOutputConnected');
+bindStateAlias('cameraShake', gameState.effects, 'cameraShake');
+bindStateAlias('cinematicCamera', gameState.effects, 'cinematicCamera');
 
 // Camera shake system
-let cameraShake = {
-    intensity: 0,
-    decay: 0.9,
-    offsetX: 0,
-    offsetY: 0,
-    offsetZ: 0
-};
 const baseCameraPosition = { x: 0, y: 12, z: -18 };
 const baseCameraLookAt = { x: 0, y: -3, z: 25 };
-
-// Cinematic camera system
-let cinematicCamera = {
-    active: false,
-    type: null,  // 'boss_defeat' or 'portal_zoom'
-    progress: 0,
-    duration: 0,
-    startPos: { x: 0, y: 0, z: 0 },
-    targetPos: { x: 0, y: 0, z: 0 },
-    lookAtTarget: { x: 0, y: 0, z: 0 }
-};
 
 // Constants for timing and spacing
 const PORTAL_SPAWN_DELAY = 1500; // ms after boss defeat
@@ -144,7 +229,7 @@ function lerp(start, end, alpha) {
 // Difficulty settings
 const difficultySettings = {
     easy: {
-        enemySpeed: { min: 0.1, max: 0.2 },
+        enemySpeed: { min: 0.08, max: 0.16 },
         spawnInterval: 2000,
         enemyPoints: 10,
         bossHealthMultiplier: 0.7,
@@ -153,10 +238,13 @@ const difficultySettings = {
         scalingFactor: 0.20,  // Controls growth rate (slower for easy)
         enemyFireInterval: { min: 180, max: 300 },  // frames between enemy shots
         bossFireInterval: 60,
-        bossMultiShot: false
+        bossMultiShot: false,
+        bossBulletSpeedMultiplier: 1.0,
+        bossBurstShots: 2,
+        bossBurstPauseFrames: 24
     },
     medium: {
-        enemySpeed: { min: 0.2, max: 0.35 },
+        enemySpeed: { min: 0.16, max: 0.28 },
         spawnInterval: 1400,
         enemyPoints: 15,
         bossHealthMultiplier: 1.0,
@@ -165,10 +253,13 @@ const difficultySettings = {
         scalingFactor: 0.25,  // Medium growth rate
         enemyFireInterval: { min: 120, max: 240 },
         bossFireInterval: 40,
-        bossMultiShot: true
+        bossMultiShot: true,
+        bossBulletSpeedMultiplier: 1.0,
+        bossBurstShots: 2,
+        bossBurstPauseFrames: 36
     },
     hard: {
-        enemySpeed: { min: 0.35, max: 0.55 },
+        enemySpeed: { min: 0.28, max: 0.44 },
         spawnInterval: 900,
         enemyPoints: 25,
         bossHealthMultiplier: 1.3,
@@ -176,8 +267,11 @@ const difficultySettings = {
         minSpawnInterval: 700,
         scalingFactor: 0.28,  // Faster growth but diminishing
         enemyFireInterval: { min: 60, max: 150 },
-        bossFireInterval: 25,
-        bossMultiShot: true
+        bossFireInterval: 32, // Reduced pressure from 25 -> 32
+        bossMultiShot: true,
+        bossBulletSpeedMultiplier: 0.88,
+        bossBurstShots: 2,
+        bossBurstPauseFrames: 72
     }
 };
 
@@ -579,25 +673,13 @@ function restoreShield() {
     }
 }
 
-// Arrays
-let bullets = [];
-let enemies = [];
-let particles = [];
-let enemyLights = [];
-let engineParticles = [];
-let enemyBullets = [];
-let enemyEngineParticles = [];
-let enemyEngineParticleCounter = 0;
-
 // Keys
-const keys = {};
+const keys = gameState.input.keys;
 
 // Sound System - Web Audio API
 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 const masterGain = audioContext.createGain();
 masterGain.connect(audioContext.destination);
-let isMuted = false;
-let masterOutputConnected = true;
 
 function applyMuteState() {
     const gainValue = isMuted ? 0 : 1;
@@ -1446,6 +1528,7 @@ function createBoss() {
     const difficultyMultiplier = difficultySettings[difficulty].bossHealthMultiplier;
     const bossHealth = Math.round(baseHealth * difficultyMultiplier);
 
+    const bossSettings = difficultySettings[difficulty];
     boss = {
         mesh: group,
         health: bossHealth,
@@ -1453,7 +1536,11 @@ function createBoss() {
         speed: 0.1,
         direction: 1,
         fireTimer: 60,
-        fireInterval: difficultySettings[difficulty].bossFireInterval
+        fireInterval: bossSettings.bossFireInterval,
+        burstShotsPerCycle: bossSettings.bossBurstShots,
+        burstShotsRemaining: bossSettings.bossBurstShots,
+        burstPauseFrames: bossSettings.bossBurstPauseFrames,
+        bulletSpeedMultiplier: bossSettings.bossBulletSpeedMultiplier
     };
 
     // Cache animated children references (avoids per-frame traverse)
@@ -1500,7 +1587,7 @@ function updateBoss() {
     }
 
     // Slowly advance forward
-    boss.mesh.position.z -= 0.05;
+    boss.mesh.position.z -= 0.04;
 
     // Rotation for intimidation
     boss.mesh.rotation.y += 0.01;
@@ -1512,23 +1599,32 @@ function updateBoss() {
     boss.fireTimer--;
     if (boss.fireTimer <= 0) {
         const bossPos = boss.mesh.position;
+        const multiShotSpeed = (0.5 + (currentLevel - 1) * 0.03) * boss.bulletSpeedMultiplier;
+        const singleShotSpeed = 0.45 * boss.bulletSpeedMultiplier;
         if (difficultySettings[difficulty].bossMultiShot) {
             for (let s = -1; s <= 1; s++) {
                 createEnemyBullet(
                     bossPos.x, bossPos.y, bossPos.z,
                     player.x + s * 8, player.y, player.z,
-                    0.5 + (currentLevel - 1) * 0.03
+                    multiShotSpeed
                 );
             }
         } else {
             createEnemyBullet(
                 bossPos.x, bossPos.y, bossPos.z,
                 player.x, player.y, player.z,
-                0.45
+                singleShotSpeed
             );
         }
         playEnemyShootSound();
-        boss.fireTimer = boss.fireInterval;
+        if (boss.burstShotsRemaining > 1) {
+            boss.burstShotsRemaining--;
+            boss.fireTimer = boss.fireInterval;
+        } else {
+            // Give the player a brief counter-attack window between burst cycles.
+            boss.burstShotsRemaining = boss.burstShotsPerCycle;
+            boss.fireTimer = boss.burstPauseFrames;
+        }
     }
 
     // Check if boss reached player (game over)
@@ -3466,8 +3562,6 @@ function startGame() {
 }
 
 // Game Loop
-let lastEnemySpawn = 0;
-let engineParticleCounter = 0;  // Throttle engine particle creation
 
 function gameLoop(timestamp = 0) {
     if (!gameRunning) return;
@@ -3612,9 +3706,6 @@ initializeBriefingScreen();
 })();
 
 // Tilt Controls — use device orientation for left/right movement on mobile
-let tiltEnabled = false;
-let tiltCalibrated = false;
-let tiltBaseValue = 0;     // calibration: the phone's natural resting tilt
 const TILT_THRESHOLD = 5;  // degrees of tilt before movement starts
 const TILT_MAX = 30;       // degrees at which tilt is considered full
 
