@@ -28,6 +28,10 @@ const gameDifficultyElement = document.getElementById('gameDifficulty');
 const restartBtn = document.getElementById('restartBtn');
 const difficultyBtns = document.querySelectorAll('.difficulty-btn');
 const touchControlsEl = document.getElementById('touchControls');
+const weaponHudEl = document.getElementById('weaponHUD');
+const hudLeftEl = document.querySelector('.hud-left');
+const weaponHudDesktopParent = weaponHudEl ? weaponHudEl.parentNode : null;
+const weaponHudDesktopNextSibling = weaponHudEl ? weaponHudEl.nextSibling : null;
 
 // Three.js Scene Setup
 const scene = new THREE.Scene();
@@ -2946,6 +2950,31 @@ function updateWeaponHUD() {
     }
 }
 
+function syncWeaponHudPlacement() {
+    if (!weaponHudEl || !hudLeftEl || !weaponHudDesktopParent) return;
+
+    const mobileHudLayout = window.matchMedia('(hover: none), (max-width: 1024px) and (max-height: 600px)').matches;
+
+    if (mobileHudLayout) {
+        weaponHudEl.classList.add('weapon-hud-mobile');
+        const levelHudItem = hudLeftEl.querySelector('.hud-level');
+        if (levelHudItem) {
+            levelHudItem.insertAdjacentElement('afterend', weaponHudEl);
+        } else {
+            hudLeftEl.appendChild(weaponHudEl);
+        }
+    } else {
+        weaponHudEl.classList.remove('weapon-hud-mobile');
+        if (weaponHudEl.parentNode !== weaponHudDesktopParent) {
+            if (weaponHudDesktopNextSibling && weaponHudDesktopNextSibling.parentNode === weaponHudDesktopParent) {
+                weaponHudDesktopParent.insertBefore(weaponHudEl, weaponHudDesktopNextSibling);
+            } else {
+                weaponHudDesktopParent.appendChild(weaponHudEl);
+            }
+        }
+    }
+}
+
 // Particles
 function createExplosion(x, y, z) {
     playExplosionSound();  // Play sound effect
@@ -3649,9 +3678,11 @@ window.addEventListener('resize', () => {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     composer.setSize(window.innerWidth, window.innerHeight);
+    syncWeaponHudPlacement();
 });
 
 // Initialize high score display on page load
+syncWeaponHudPlacement();
 updateHighScoreDisplay();
 initializeBriefingScreen();
 

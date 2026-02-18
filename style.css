@@ -91,6 +91,17 @@ body {
     pointer-events: none;
 }
 
+.weapon-hud.weapon-hud-mobile {
+    position: static;
+    bottom: auto;
+    right: auto;
+    z-index: auto;
+    padding: 8px 18px;
+    font-size: 1.25em;
+    border-radius: 12px;
+    letter-spacing: 1px;
+}
+
 .hud-lives {
     color: #ff4444;
     text-shadow: 0 0 8px rgba(255, 68, 68, 0.6);
@@ -805,6 +816,16 @@ body::before {
         right: 10px;
         font-size: 0.8em;
         padding: 4px 14px;
+    }
+
+    .weapon-hud.weapon-hud-mobile {
+        padding: 4px 10px;
+        font-size: 0.85em;
+        border-radius: 8px;
+        height: 30px;
+        line-height: 22px;
+        display: flex;
+        align-items: center;
     }
 
     .start-screen,
