@@ -81,6 +81,10 @@ let portalAnimating = false;
 let portalAnimationId = null;
 let levelTransitionTimeout = null;
 let tiltAmount = 0; // -1 (full left) to +1 (full right), 0 = no tilt
+let lastShotTime = 0;
+let pickups = [];
+let lastDropType = null;
+let weaponAmmo = { spread: 0 };
 
 // Camera shake system
 let cameraShake = {
@@ -258,7 +262,58 @@ const player = {
     shield: true,
     shieldMesh: null,
     invulnerable: false,
-    invulnerableTimer: 0
+    invulnerableTimer: 0,
+    weaponType: 'default'
+};
+
+// Weapon definitions
+const WEAPONS = {
+    default: {
+        name: 'BLASTERS',
+        symbol: '\u2759\u2759\u2759',
+        fireInterval: 150,
+        bulletSpeed: 1.2,
+        damage: 1,
+        piercing: false,
+        color: 0xffff00,
+        emissiveColor: 0xffff00
+    },
+    spread: {
+        name: 'SPREAD SHOT',
+        symbol: '\u2747',
+        fireInterval: 210,
+        bulletSpeed: 1.0,
+        damage: 1,
+        piercing: false,
+        color: 0x00ff66,
+        emissiveColor: 0x00ff66
+    }
+};
+
+const PICKUP_TYPES = ['spread', 'shield'];
+const PICKUP_COLORS = {
+    spread: 0x00ff66,
+    shield: 0x00aaff,
+    extraLife: 0xff66cc
+};
+const PICKUP_SYMBOLS = {
+    spread: '\u2747',
+    shield: '\ud83d\udee1',
+    extraLife: '\u2665'
+};
+
+// Shared geometries — created once, reused to reduce GPU allocations
+const SHARED_GEO = {
+    bulletDefault: new THREE.CylinderGeometry(0.2, 0.2, 1.5, 6),
+    bulletSpread: new THREE.CylinderGeometry(0.18, 0.18, 1.0, 6),
+    engineParticle: new THREE.SphereGeometry(0.15, 6, 6),
+    enemyEngineParticle: new THREE.SphereGeometry(0.1, 6, 6),
+    explosionFlash: new THREE.SphereGeometry(1.2, 12, 12),
+    explosionRing: new THREE.TorusGeometry(0.4, 0.07, 8, 16),
+    explosionParticle: new THREE.SphereGeometry(0.12, 6, 6),
+    bossFlash: new THREE.SphereGeometry(2, 16, 16),
+    bossRing: new THREE.TorusGeometry(0.6, 0.1, 8, 16),
+    bossParticle: new THREE.SphereGeometry(0.2, 6, 6),
 };
 
 // Create Player Mesh - Modern Fighter Design
@@ -813,7 +868,6 @@ document.addEventListener('keydown', (e) => {
     keys[e.key] = true;
 
     if (e.key === ' ' && gameRunning) {
-        // Prevent focused HUD buttons (e.g., mute) from toggling via Space key.
         e.preventDefault();
         if (!gamePaused && !levelTransitioning) {
             shootBullet();
@@ -982,21 +1036,26 @@ function updateCinematicCamera() {
 
 // Move Player
 function movePlayer() {
+    // Scale player speed with level (10% per level, capped at 2x)
+    const speedMultiplier = Math.min(2.0, 1 + (currentLevel - 1) * 0.1);
+    const currentAccel = player.acceleration * speedMultiplier;
+    const currentMaxSpeed = player.maxSpeed * speedMultiplier;
+
     // Horizontal movement (keyboard, touch buttons, or tilt)
     const moveLeft = keys['ArrowLeft'];
     const moveRight = keys['ArrowRight'];
 
     if (moveLeft) {
-        player.velocityX -= player.acceleration;
+        player.velocityX -= currentAccel;
     }
     if (moveRight) {
-        player.velocityX += player.acceleration;
+        player.velocityX += currentAccel;
     }
 
     // Tilt: apply proportional acceleration + friction so ship reaches a
     // proportional terminal velocity instead of always maxing out
     if (tiltAmount !== 0 && !moveLeft && !moveRight) {
-        player.velocityX += tiltAmount * player.acceleration;
+        player.velocityX += tiltAmount * currentAccel;
         player.velocityX *= player.friction;
     } else if (tiltAmount === 0 && !moveLeft && !moveRight) {
         player.velocityX *= player.friction;
@@ -1005,8 +1064,8 @@ function movePlayer() {
         }
     }
 
-    if (player.velocityX > player.maxSpeed) player.velocityX = player.maxSpeed;
-    if (player.velocityX < -player.maxSpeed) player.velocityX = -player.maxSpeed;
+    if (player.velocityX > currentMaxSpeed) player.velocityX = currentMaxSpeed;
+    if (player.velocityX < -currentMaxSpeed) player.velocityX = -currentMaxSpeed;
 
     player.x -= player.velocityX;  // Flipped to fix opposite movement
 
@@ -1064,36 +1123,94 @@ function movePlayer() {
     }
 }
 
-// Bullet - Shoot multiple bullets from different positions
+// Weapon system - fire rate check
+function canShoot() {
+    const now = Date.now();
+    const weapon = WEAPONS[player.weaponType];
+    if (now - lastShotTime < weapon.fireInterval) return false;
+    lastShotTime = now;
+    return true;
+}
+
+function createBulletMesh(weapon, radius) {
+    const geo = (radius <= 0.18) ? SHARED_GEO.bulletSpread : SHARED_GEO.bulletDefault;
+    const material = new THREE.MeshBasicMaterial({
+        color: weapon.color,
+        emissive: weapon.emissiveColor,
+        emissiveIntensity: 1
+    });
+    const mesh = new THREE.Mesh(geo, material);
+    mesh.rotation.x = Math.PI / 2;
+    return mesh;
+}
+
+function addBullet(mesh, weapon, velocity) {
+    const bullet = {
+        mesh: mesh,
+        speed: velocity || weapon.bulletSpeed,
+        damage: weapon.damage,
+        piercing: weapon.piercing
+    };
+    bullets.push(bullet);
+    scene.add(mesh);
+    return bullet;
+}
+
+// Bullet - Shoot based on current weapon type
 function shootBullet() {
-    playShootSound();  // Play sound effect
+    if (!canShoot()) return;
 
-    const bulletPositions = [
-        { x: 0, z: 4 },      // Center
-        { x: -1.8, z: 3.5 }, // Left wing
-        { x: 1.8, z: 3.5 }   // Right wing
+    // Check ammo for non-default weapons
+    if (player.weaponType !== 'default') {
+        if (weaponAmmo[player.weaponType] <= 0) {
+            player.weaponType = 'default';
+            updateWeaponHUD();
+        }
+    }
+
+    playShootSound();
+    const weapon = WEAPONS[player.weaponType];
+
+    switch (player.weaponType) {
+        case 'spread':
+            shootSpread(weapon);
+            break;
+        default:
+            shootDefault(weapon);
+            break;
+    }
+
+    // Consume ammo for non-default weapons
+    if (player.weaponType !== 'default') {
+        weaponAmmo[player.weaponType]--;
+        updateWeaponHUD();
+        if (weaponAmmo[player.weaponType] <= 0) {
+            player.weaponType = 'default';
+            updateWeaponHUD();
+        }
+    }
+}
+
+function shootDefault(weapon) {
+    const positions = [
+        { x: 0, z: 4 },
+        { x: -1.8, z: 3.5 },
+        { x: 1.8, z: 3.5 }
     ];
+    positions.forEach(offset => {
+        const mesh = createBulletMesh(weapon, 0.2);
+        mesh.position.set(player.x + offset.x, player.y, player.z + offset.z);
+        addBullet(mesh, weapon);
+    });
+}
 
-    bulletPositions.forEach(offset => {
-        const geometry = new THREE.CylinderGeometry(0.2, 0.2, 1.5, 6);
-        const material = new THREE.MeshBasicMaterial({
-            color: 0xffff00,
-            emissive: 0xffff00,
-            emissiveIntensity: 1
-        });
-        const bulletMesh = new THREE.Mesh(geometry, material);
-        bulletMesh.rotation.x = Math.PI / 2;
-
-        // Shoot bullets from different positions on the ship
-        bulletMesh.position.set(player.x + offset.x, player.y, player.z + offset.z);
-
-        bullets.push({
-            mesh: bulletMesh,
-            speed: 1.2,
-            box: new THREE.Box3()
-        });
-
-        scene.add(bulletMesh);
+function shootSpread(weapon) {
+    const angles = [-0.15, -0.07, 0, 0.07, 0.15];
+    angles.forEach(angle => {
+        const mesh = createBulletMesh(weapon, 0.18);
+        mesh.position.set(player.x, player.y, player.z + 4);
+        const bullet = addBullet(mesh, weapon);
+        bullet.velocityX = angle * weapon.bulletSpeed;
     });
 }
 
@@ -1101,9 +1218,14 @@ function updateBullets() {
     for (let i = bullets.length - 1; i >= 0; i--) {
         const bullet = bullets[i];
         bullet.mesh.position.z += bullet.speed;
-        bullet.box.setFromObject(bullet.mesh);
 
-        if (bullet.mesh.position.z > 80) {
+        // Spread shot lateral movement
+        if (bullet.velocityX) {
+            bullet.mesh.position.x += bullet.velocityX;
+        }
+
+
+        if (bullet.mesh.position.z > 80 || Math.abs(bullet.mesh.position.x) > 50) {
             disposeMesh(bullet.mesh);
             scene.remove(bullet.mesh);
             bullets.splice(i, 1);
@@ -1330,10 +1452,19 @@ function createBoss() {
         maxHealth: bossHealth,
         speed: 0.1,
         direction: 1,
-        box: new THREE.Box3(),
         fireTimer: 60,
         fireInterval: difficultySettings[difficulty].bossFireInterval
     };
+
+    // Cache animated children references (avoids per-frame traverse)
+    boss.cached = { shields: [], armor: [], rings: [], pulses: [], emissiveChildren: [] };
+    boss.mesh.traverse((child) => {
+        if (child.userData.isBossShield) boss.cached.shields.push(child);
+        if (child.userData.isBossArmor) boss.cached.armor.push(child);
+        if (child.userData.isRing) boss.cached.rings.push(child);
+        if (child.userData.isPulse) boss.cached.pulses.push(child);
+        if (child.material && child.material.emissive) boss.cached.emissiveChildren.push(child);
+    });
 
     boss.mesh.position.set(0, -5, 70);
     boss.mesh.castShadow = !isMobile;
@@ -1400,8 +1531,6 @@ function updateBoss() {
         boss.fireTimer = boss.fireInterval;
     }
 
-    boss.box.setFromObject(boss.mesh);
-
     // Check if boss reached player (game over)
     if (boss.mesh.position.z < -10) {
         lives = 0;
@@ -1423,23 +1552,24 @@ function checkBossCollision() {
 
         if (distance < 4.5) {  // Boss hit radius
             playBossHitSound();
-            disposeMesh(bullet.mesh);
-            scene.remove(bullet.mesh);
-            bullets.splice(bIndex, 1);
 
-            boss.health--;
+            if (!bullet.piercing) {
+                disposeMesh(bullet.mesh);
+                scene.remove(bullet.mesh);
+                bullets.splice(bIndex, 1);
+            }
+
+            boss.health -= (bullet.damage || 1);
             updateBossHealthBar();
 
             // Flash effect on hit
-            boss.mesh.children.forEach(child => {
-                if (child.material && child.material.emissive) {
-                    const originalIntensity = child.material.emissiveIntensity;
-                    child.material.emissiveIntensity = 2;
-                    setTimeout(() => {
-                        if (child.material) child.material.emissiveIntensity = originalIntensity;
-                    }, 100);
-                }
-            });
+            const bossFlashParts = boss.cached.emissiveChildren;
+            for (let fi = 0; fi < bossFlashParts.length; fi++) {
+                const mat = bossFlashParts[fi].material;
+                const originalIntensity = mat.emissiveIntensity;
+                mat.emissiveIntensity = 2;
+                setTimeout(() => { if (mat) mat.emissiveIntensity = originalIntensity; }, 100);
+            }
 
             if (boss.health <= 0) {
                 defeatBoss();
@@ -1466,13 +1596,12 @@ function defeatBoss() {
     shakeCamera(0.6);  // Bigger shake for boss explosion
 
     // Flash effect - larger for boss
-    const flashGeometry = new THREE.SphereGeometry(2, 16, 16);
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: 0xffff00,
         transparent: true,
         opacity: 1.0
     });
-    const flashMesh = new THREE.Mesh(flashGeometry, flashMaterial);
+    const flashMesh = new THREE.Mesh(SHARED_GEO.bossFlash, flashMaterial);
     flashMesh.position.copy(boss.mesh.position);
     scene.add(flashMesh);
     particles.push({
@@ -1483,13 +1612,12 @@ function defeatBoss() {
     });
 
     // Shockwave ring - bigger for boss
-    const ringGeometry = new THREE.TorusGeometry(0.6, 0.1, 8, 16);
     const ringMaterial = new THREE.MeshBasicMaterial({
         color: 0xff3300,
         transparent: true,
         opacity: 0.8
     });
-    const ringMesh = new THREE.Mesh(ringGeometry, ringMaterial);
+    const ringMesh = new THREE.Mesh(SHARED_GEO.bossRing, ringMaterial);
     ringMesh.position.copy(boss.mesh.position);
     ringMesh.rotation.x = Math.PI / 2;
     scene.add(ringMesh);
@@ -1503,12 +1631,10 @@ function defeatBoss() {
 
     // Boss explosion - more particles, bigger, but contained
     for (let i = 0; i < 50; i++) {
-        const size = 0.15 + Math.random() * 0.25;
-        const geometry = new THREE.SphereGeometry(size, 6, 6);
         const material = new THREE.MeshBasicMaterial({
             color: Math.random() > 0.3 ? 0xff0000 : 0xffff00
         });
-        const particleMesh = new THREE.Mesh(geometry, material);
+        const particleMesh = new THREE.Mesh(SHARED_GEO.bossParticle, material);
         particleMesh.position.copy(boss.mesh.position);
 
         const speed = 0.3 + Math.random() * 0.5;
@@ -1526,6 +1652,13 @@ function defeatBoss() {
         particles.push(particle);
     }
 
+    // Boss guaranteed weapon pickup — spawn near the player so it's reachable before portal
+    spawnPickup(player.x, player.y, player.z + 15, true);
+
+    // Dispose boss lights before removing mesh
+    boss.mesh.traverse((child) => {
+        if (child.isLight && child.dispose) child.dispose();
+    });
     disposeMesh(boss.mesh);
     scene.remove(boss.mesh);
     boss = null;
@@ -1546,15 +1679,10 @@ function defeatBoss() {
     score += levelBonus;
     updateScore();
 
-    // Boss counts as 3 enemies for extra life
-    if (lives < 3) {
-        targetsHit += 3;
-        if (targetsHit >= 10) {
-            lives++;
-            updateLives();
-            targetsHit = lives < 3 ? targetsHit - 10 : 0;
-        }
-    } else {
+    // Boss counts as 3 kills toward extra life drop
+    targetsHit += 3;
+    if (targetsHit >= 10 && lives < 3) {
+        spawnExtraLifePickup(player.x, player.y, player.z + 15);
         targetsHit = 0;
     }
 
@@ -2222,7 +2350,6 @@ function createEnemy(type) {
         mesh: mesh,
         speed: baseSpeed * levelMultiplier,  // Faster with each level
         type: type,
-        box: new THREE.Box3(),
         lateralSpeed: (Math.random() - 0.5) * 0.25 * levelMultiplier,
         lateralDirection: Math.random() < 0.5 ? -1 : 1,  // Initial direction
         waveOffset: Math.random() * Math.PI * 2,  // Random starting point in wave
@@ -2247,66 +2374,80 @@ function createEnemy(type) {
     enemy.mesh.add(light);
     enemyLights.push(light);
 
+    // Cache animated children references (avoids per-frame traverse)
+    enemy.cached = { rings: [], pulses: [], wings: [], weapons: [], spikes: [], armorPlates: [], turretTips: [], allMaterials: [] };
+    enemy.mesh.traverse((child) => {
+        if (child.userData.isRing) enemy.cached.rings.push(child);
+        if (child.userData.isPulse) enemy.cached.pulses.push(child);
+        if (child.userData.isWing) enemy.cached.wings.push(child);
+        if (child.userData.isWeapon) enemy.cached.weapons.push(child);
+        if (child.userData.isSpike) enemy.cached.spikes.push(child);
+        if (child.userData.isArmorPlate) enemy.cached.armorPlates.push(child);
+        if (child.userData.isTurretTip) enemy.cached.turretTips.push(child);
+        if (child.material) enemy.cached.allMaterials.push(child);
+    });
+
     scene.add(enemy.mesh);
     enemies.push(enemy);
 }
 
 // Procedural animations for enemy parts
 function animateEnemyParts(enemy) {
-    enemy.mesh.traverse((child) => {
-        if (child.userData.isRing) {
-            child.rotation.z += child.userData.rotationSpeed;
+    const c = enemy.cached;
+    for (let i = 0; i < c.rings.length; i++) {
+        c.rings[i].rotation.z += c.rings[i].userData.rotationSpeed;
+    }
+    const now = Date.now();
+    for (let i = 0; i < c.pulses.length; i++) {
+        if (!c.pulses[i].userData.isCharging) {
+            const pulse = Math.sin(now * 0.005) * 0.15 + 1;
+            c.pulses[i].scale.set(pulse, pulse, pulse);
         }
-        if (child.userData.isPulse && !child.userData.isCharging) {
-            const pulse = Math.sin(Date.now() * 0.005) * 0.15 + 1;
-            child.scale.set(pulse, pulse, pulse);
-        }
-        if (child.userData.isWing) {
-            const flap = Math.sin(Date.now() * child.userData.flapSpeed) * 0.2;
-            child.rotation.y = flap;
-        }
-        if (child.userData.isWeapon) {
-            child.userData.weaponAngle += child.userData.rotationSpeed;
-            child.position.set(
-                Math.cos(child.userData.weaponAngle) * 2,
-                -0.5,
-                Math.sin(child.userData.weaponAngle) * 2
-            );
-        }
-        if (child.userData.isSpike) {
-            const bob = Math.sin(Date.now() * 0.008 + child.position.x * 10) * 0.03;
-            child.position.y += bob;
-        }
-        if (child.userData.isArmorPlate) {
-            child.userData.orbitAngle += child.userData.orbitSpeed;
-            child.position.x = Math.cos(child.userData.orbitAngle) * 1.4;
-            child.position.z = Math.sin(child.userData.orbitAngle) * 1.4;
-        }
-    });
+    }
+    for (let i = 0; i < c.wings.length; i++) {
+        const flap = Math.sin(now * c.wings[i].userData.flapSpeed) * 0.2;
+        c.wings[i].rotation.y = flap;
+    }
+    for (let i = 0; i < c.weapons.length; i++) {
+        const w = c.weapons[i];
+        w.userData.weaponAngle += w.userData.rotationSpeed;
+        w.position.set(Math.cos(w.userData.weaponAngle) * 2, -0.5, Math.sin(w.userData.weaponAngle) * 2);
+    }
+    for (let i = 0; i < c.spikes.length; i++) {
+        const bob = Math.sin(now * 0.008 + c.spikes[i].position.x * 10) * 0.03;
+        c.spikes[i].position.y += bob;
+    }
+    for (let i = 0; i < c.armorPlates.length; i++) {
+        const p = c.armorPlates[i];
+        p.userData.orbitAngle += p.userData.orbitSpeed;
+        p.position.x = Math.cos(p.userData.orbitAngle) * 1.4;
+        p.position.z = Math.sin(p.userData.orbitAngle) * 1.4;
+    }
 }
 
 function animateBossParts() {
     if (!boss || !boss.mesh) return;
-    boss.mesh.traverse((child) => {
-        if (child.userData.isBossShield) {
-            child.rotation.y += 0.005;
-            child.rotation.x += 0.003;
-            child.material.opacity = 0.12 + Math.sin(Date.now() * 0.002) * 0.05;
-        }
-        if (child.userData.isBossArmor) {
-            child.userData.orbitAngle += child.userData.orbitSpeed;
-            child.position.x = Math.cos(child.userData.orbitAngle) * 2.8;
-            child.position.z = Math.sin(child.userData.orbitAngle) * 2.8;
-            child.rotation.y = child.userData.orbitAngle;
-        }
-        if (child.userData.isRing) {
-            child.rotation.z += child.userData.rotationSpeed;
-        }
-        if (child.userData.isPulse) {
-            const pulse = Math.sin(Date.now() * 0.006) * 0.12 + 1;
-            child.scale.set(pulse, pulse, pulse);
-        }
-    });
+    const c = boss.cached;
+    const now = Date.now();
+    for (let i = 0; i < c.shields.length; i++) {
+        c.shields[i].rotation.y += 0.005;
+        c.shields[i].rotation.x += 0.003;
+        c.shields[i].material.opacity = 0.12 + Math.sin(now * 0.002) * 0.05;
+    }
+    for (let i = 0; i < c.armor.length; i++) {
+        const a = c.armor[i];
+        a.userData.orbitAngle += a.userData.orbitSpeed;
+        a.position.x = Math.cos(a.userData.orbitAngle) * 2.8;
+        a.position.z = Math.sin(a.userData.orbitAngle) * 2.8;
+        a.rotation.y = a.userData.orbitAngle;
+    }
+    for (let i = 0; i < c.rings.length; i++) {
+        c.rings[i].rotation.z += c.rings[i].userData.rotationSpeed;
+    }
+    for (let i = 0; i < c.pulses.length; i++) {
+        const pulse = Math.sin(now * 0.006) * 0.12 + 1;
+        c.pulses[i].scale.set(pulse, pulse, pulse);
+    }
 }
 
 function updateEnemies() {
@@ -2328,12 +2469,11 @@ function updateEnemies() {
             enemy.mesh.position.y += enemy.deathSpin.y * 2;
 
             // Fade out and shrink
-            enemy.mesh.traverse((child) => {
-                if (child.material) {
-                    child.material.opacity = enemy.deathTimer / 20;
-                    child.material.transparent = true;
-                }
-            });
+            const mats = enemy.cached.allMaterials;
+            for (let m = 0; m < mats.length; m++) {
+                mats[m].material.opacity = enemy.deathTimer / 20;
+                mats[m].material.transparent = true;
+            }
             enemy.mesh.scale.multiplyScalar(0.97);
 
             if (enemy.deathTimer <= 0) {
@@ -2378,16 +2518,24 @@ function updateEnemies() {
             // Weapon charging VFX (15 frames before firing)
             if (enemy.fireTimer <= 15 && enemy.fireTimer > 0) {
                 const chargeProgress = 1 - (enemy.fireTimer / 15);
-                enemy.mesh.traverse((child) => {
-                    if (child.userData.isPulse || child.userData.isTurretTip) {
-                        child.userData.isCharging = true;
-                        const chargeScale = 1 + chargeProgress * 0.25;
-                        child.scale.set(chargeScale, chargeScale, chargeScale);
-                        if (child.material && child.material.emissiveIntensity !== undefined) {
-                            child.material.emissiveIntensity = 0.5 + chargeProgress * 0.5;
-                        }
+                const chargeParts = enemy.cached.pulses;
+                const chargeTips = enemy.cached.turretTips;
+                for (let ci = 0; ci < chargeParts.length; ci++) {
+                    chargeParts[ci].userData.isCharging = true;
+                    const chargeScale = 1 + chargeProgress * 0.25;
+                    chargeParts[ci].scale.set(chargeScale, chargeScale, chargeScale);
+                    if (chargeParts[ci].material && chargeParts[ci].material.emissiveIntensity !== undefined) {
+                        chargeParts[ci].material.emissiveIntensity = 0.5 + chargeProgress * 0.5;
                     }
-                });
+                }
+                for (let ci = 0; ci < chargeTips.length; ci++) {
+                    chargeTips[ci].userData.isCharging = true;
+                    const chargeScale = 1 + chargeProgress * 0.25;
+                    chargeTips[ci].scale.set(chargeScale, chargeScale, chargeScale);
+                    if (chargeTips[ci].material && chargeTips[ci].material.emissiveIntensity !== undefined) {
+                        chargeTips[ci].material.emissiveIntensity = 0.5 + chargeProgress * 0.5;
+                    }
+                }
             }
 
             if (enemy.fireTimer <= 0) {
@@ -2404,15 +2552,12 @@ function updateEnemies() {
                 enemy.fireTimer = enemy.fireInterval;
 
                 // Reset charging state
-                enemy.mesh.traverse((child) => {
-                    if (child.userData.isCharging) {
-                        child.userData.isCharging = false;
-                    }
-                });
+                const resetParts = enemy.cached.pulses;
+                for (let ri = 0; ri < resetParts.length; ri++) resetParts[ri].userData.isCharging = false;
+                const resetTips = enemy.cached.turretTips;
+                for (let ri = 0; ri < resetTips.length; ri++) resetTips[ri].userData.isCharging = false;
             }
         }
-
-        enemy.box.setFromObject(enemy.mesh);
 
         if (enemy.mesh.position.z < -20) {
             disposeMesh(enemy.mesh);
@@ -2450,9 +2595,12 @@ function checkCollisions() {
 
             if (dy < yTolerance && dx < xHitRadius) {
                 createExplosion(enemyPos.x, enemyPos.y, enemyPos.z);
-                disposeMesh(bullet.mesh);
-                scene.remove(bullet.mesh);
-                bullets.splice(bIndex, 1);
+
+                if (!bullet.piercing) {
+                    disposeMesh(bullet.mesh);
+                    scene.remove(bullet.mesh);
+                    bullets.splice(bIndex, 1);
+                }
 
                 // Start death animation instead of immediate removal
                 enemy.dying = true;
@@ -2464,35 +2612,34 @@ function checkCollisions() {
                 );
 
                 // Hit flash
-                enemy.mesh.traverse((child) => {
-                    if (child.material && child.material.emissive) {
-                        const orig = child.material.emissiveIntensity;
-                        child.material.emissiveIntensity = 2.0;
-                        setTimeout(() => {
-                            if (child.material) child.material.emissiveIntensity = orig;
-                        }, 100);
+                const flashParts = enemy.cached.allMaterials;
+                for (let fi = 0; fi < flashParts.length; fi++) {
+                    const mat = flashParts[fi].material;
+                    if (mat.emissive) {
+                        const orig = mat.emissiveIntensity;
+                        mat.emissiveIntensity = 2.0;
+                        setTimeout(() => { if (mat) mat.emissiveIntensity = orig; }, 100);
                     }
-                });
+                }
 
-                score += difficultySettings[difficulty].enemyPoints * currentLevel;  // More points at higher levels
+                score += difficultySettings[difficulty].enemyPoints * currentLevel;
                 updateScore();
 
                 // Track enemies defeated for boss trigger
                 enemiesDefeatedThisLevel++;
 
-                // Life bonus: gain 1 life for every 10 targets hit (max 3)
-                if (lives < 3) {
-                    targetsHit++;
-                    if (targetsHit >= 10) {
-                        lives++;
-                        updateLives();
-                        targetsHit = lives < 3 ? targetsHit - 10 : 0;
-                    }
-                } else {
+                // Track kills for extra life drop
+                targetsHit++;
+                if (targetsHit >= 10 && lives < 3) {
+                    // Force-spawn extra life pickup
+                    spawnExtraLifePickup(enemyPos.x, enemyPos.y, enemyPos.z);
                     targetsHit = 0;
+                } else if (Math.random() < 0.15) {
+                    // Normal 15% chance to drop a pickup
+                    spawnPickup(enemyPos.x, enemyPos.y, enemyPos.z);
                 }
 
-                break;  // Bullet hit something, move to next bullet
+                if (!bullet.piercing) break;  // Non-piercing: move to next bullet
             }
         }
     }
@@ -2549,19 +2696,172 @@ function checkEnemyBulletCollisions() {
     }
 }
 
+// Pickup System
+function createPickupGroup(type) {
+    const color = PICKUP_COLORS[type];
+    const symbol = PICKUP_SYMBOLS[type];
+    const group = new THREE.Group();
+
+    // Symbol rendered on a plane so it can spin
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.font = '72px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#' + color.toString(16).padStart(6, '0');
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(symbol, 64, 64);
+    const texture = new THREE.CanvasTexture(canvas);
+    const planeMat = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(6.25, 6.25), planeMat);
+    group.add(plane);
+
+    return group;
+}
+
+function spawnPickup(x, y, z, weaponOnly) {
+    // Choose pickup type — avoid repeating the last drop
+    let type;
+    const pool = weaponOnly
+        ? ['spread']
+        : PICKUP_TYPES;
+    const filtered = pool.length > 1 ? pool.filter(t => t !== lastDropType) : pool;
+    type = filtered[Math.floor(Math.random() * filtered.length)];
+    lastDropType = type;
+
+    const group = createPickupGroup(type);
+    group.position.set(x, y, z);
+    scene.add(group);
+
+    pickups.push({
+        mesh: group,
+        type: type,
+        life: 480,
+        speed: 0.3
+    });
+}
+
+function spawnExtraLifePickup(x, y, z) {
+    const group = createPickupGroup('extraLife');
+    group.position.set(x, y, z);
+    scene.add(group);
+
+    pickups.push({
+        mesh: group,
+        type: 'extraLife',
+        life: 480,
+        speed: 0.3
+    });
+}
+
+function updatePickups() {
+    for (let i = pickups.length - 1; i >= 0; i--) {
+        const pickup = pickups[i];
+
+        // Spin on Y axis
+        pickup.mesh.rotation.y += 0.06;
+
+        // Drift toward player
+        const dir = new THREE.Vector3()
+            .subVectors(player.mesh.position, pickup.mesh.position)
+            .normalize();
+        pickup.mesh.position.add(dir.multiplyScalar(pickup.speed));
+
+        // Pulse scale
+        const pulse = 1 + Math.sin(Date.now() * 0.008) * 0.15;
+        pickup.mesh.scale.set(pulse, pulse, pulse);
+
+        // Check collection
+        const dist = player.mesh.position.distanceTo(pickup.mesh.position);
+        if (dist < 3.0) {
+            collectPickup(pickup);
+            disposeMesh(pickup.mesh);
+            scene.remove(pickup.mesh);
+            pickups.splice(i, 1);
+            continue;
+        }
+
+        // Despawn
+        pickup.life--;
+        if (pickup.life <= 0) {
+            disposeMesh(pickup.mesh);
+            scene.remove(pickup.mesh);
+            pickups.splice(i, 1);
+        }
+    }
+}
+
+function collectPickup(pickup) {
+    switch (pickup.type) {
+        case 'spread':
+            player.weaponType = 'spread';
+            weaponAmmo.spread += 20;
+            showWeaponText(WEAPONS.spread.symbol + ' +20');
+            updateWeaponHUD();
+            break;
+        case 'extraLife':
+            if (lives < 3) {
+                lives++;
+                updateLives();
+                showWeaponText('\u2665 +1');
+            }
+            break;
+        case 'shield':
+            if (!player.shield) {
+                player.shield = true;
+                if (player.shieldMesh) {
+                    player.shieldMesh.visible = true;
+                } else {
+                    createShieldMesh();
+                }
+            }
+            showWeaponText('SHIELD UP');
+            break;
+    }
+}
+
+function showWeaponText(text) {
+    const el = document.getElementById('weaponText');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove('hidden');
+    el.classList.remove('weapon-text-fade');
+    void el.offsetWidth;
+    el.classList.add('weapon-text-fade');
+    setTimeout(() => el.classList.add('hidden'), 1500);
+}
+
+function updateWeaponHUD() {
+    const el = document.getElementById('weaponHUD');
+    if (!el) return;
+    const w = WEAPONS[player.weaponType];
+    if (player.weaponType === 'default') {
+        el.textContent = w.symbol + ' \u221E';
+    } else {
+        el.textContent = w.symbol + ' ' + weaponAmmo[player.weaponType];
+    }
+}
+
 // Particles
 function createExplosion(x, y, z) {
     playExplosionSound();  // Play sound effect
     shakeCamera(0.15);  // Subtle shake for regular explosions
 
     // Flash effect - bright sphere that fades quickly
-    const flashGeometry = new THREE.SphereGeometry(1.2, 12, 12);
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: 0xffff00,
         transparent: true,
         opacity: 0.9
     });
-    const flashMesh = new THREE.Mesh(flashGeometry, flashMaterial);
+    const flashMesh = new THREE.Mesh(SHARED_GEO.explosionFlash, flashMaterial);
     flashMesh.position.set(x, y, z);
     scene.add(flashMesh);
     particles.push({
@@ -2572,13 +2872,12 @@ function createExplosion(x, y, z) {
     });
 
     // Shockwave ring
-    const ringGeometry = new THREE.TorusGeometry(0.4, 0.07, 8, 16);
     const ringMaterial = new THREE.MeshBasicMaterial({
         color: 0xff6600,
         transparent: true,
         opacity: 0.7
     });
-    const ringMesh = new THREE.Mesh(ringGeometry, ringMaterial);
+    const ringMesh = new THREE.Mesh(SHARED_GEO.explosionRing, ringMaterial);
     ringMesh.position.set(x, y, z);
     ringMesh.rotation.x = Math.PI / 2;
     scene.add(ringMesh);
@@ -2592,12 +2891,10 @@ function createExplosion(x, y, z) {
 
     // Main explosion particles - contained but visible
     for (let i = 0; i < 20; i++) {
-        const size = 0.1 + Math.random() * 0.15;
-        const geometry = new THREE.SphereGeometry(size, 6, 6);
         const material = new THREE.MeshBasicMaterial({
             color: Math.random() > 0.5 ? 0xff6600 : 0xffff00
         });
-        const particleMesh = new THREE.Mesh(geometry, material);
+        const particleMesh = new THREE.Mesh(SHARED_GEO.explosionParticle, material);
         particleMesh.position.set(x, y, z);
 
         const speed = 0.2 + Math.random() * 0.4;
@@ -2675,13 +2972,12 @@ function createEngineParticles() {
     ];
 
     enginePositions.forEach(offset => {
-        const geometry = new THREE.SphereGeometry(0.15, 6, 6);
         const material = new THREE.MeshBasicMaterial({
-            color: Math.random() > 0.3 ? 0xff6600 : 0xffaa00,  // Orange/yellow mix
+            color: Math.random() > 0.3 ? 0xff6600 : 0xffaa00,
             transparent: true,
             opacity: 0.8
         });
-        const particleMesh = new THREE.Mesh(geometry, material);
+        const particleMesh = new THREE.Mesh(SHARED_GEO.engineParticle, material);
 
         // Position at engine location (in world space)
         particleMesh.position.set(
@@ -2739,13 +3035,12 @@ function createEnemyEngineParticles() {
         const scale = enemy.type === 2 ? 0.7 : 0.8;
 
         positions.forEach(offset => {
-            const geo = new THREE.SphereGeometry(0.1, 6, 6);
             const mat = new THREE.MeshBasicMaterial({
                 color: Math.random() > 0.4 ? typeColors[0] : typeColors[1],
                 transparent: true,
                 opacity: 0.7
             });
-            const p = new THREE.Mesh(geo, mat);
+            const p = new THREE.Mesh(SHARED_GEO.enemyEngineParticle, mat);
             const worldPos = new THREE.Vector3(
                 offset.x * scale, offset.y * scale, offset.z * scale
             );
@@ -3005,9 +3300,11 @@ async function endGame() {
         levelTransitionTimeout = null;
     }
 
-    // Clean up enemy bullets and engine particles
+    // Clean up enemy bullets, pickups, and engine particles
     enemyBullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
     enemyBullets = [];
+    pickups.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
+    pickups = [];
     enemyEngineParticles.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
     enemyEngineParticles = [];
 
@@ -3035,25 +3332,37 @@ async function endGame() {
 }
 
 function displayHighScores(scores) {
-    const highScoresContainer = document.getElementById('highScores');
-    if (!highScoresContainer) return;
+    const container = document.getElementById('highScores');
+    if (!container) return;
+    container.innerHTML = '';
 
     if (scores.length === 0) {
-        highScoresContainer.innerHTML = '<p class="hs-empty">No high scores yet</p>';
+        const p = document.createElement('p');
+        p.className = 'hs-empty';
+        p.textContent = 'No high scores yet';
+        container.appendChild(p);
         return;
     }
 
-    let html = '<h3 class="hs-title">TOP 5 SCORES</h3>';
+    const title = document.createElement('h3');
+    title.className = 'hs-title';
+    title.textContent = 'TOP 5 SCORES';
+    container.appendChild(title);
+
     scores.forEach((entry, index) => {
-        const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '🏅';
-        html += `
-            <div class="hs-entry">
-                <span class="hs-name">${medal} ${entry.name}</span>
-                <span class="hs-score">${entry.score} <span class="hs-diff">(${entry.difficulty})</span></span>
-            </div>
-        `;
+        const medal = index === 0 ? '\uD83E\uDD47' : index === 1 ? '\uD83E\uDD48' : index === 2 ? '\uD83E\uDD49' : '\uD83C\uDFC5';
+        const div = document.createElement('div');
+        div.className = 'hs-entry';
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'hs-name';
+        nameSpan.textContent = medal + ' ' + entry.name;
+        const scoreSpan = document.createElement('span');
+        scoreSpan.className = 'hs-score';
+        scoreSpan.textContent = entry.score + ' (' + entry.difficulty + ')';
+        div.appendChild(nameSpan);
+        div.appendChild(scoreSpan);
+        container.appendChild(div);
     });
-    highScoresContainer.innerHTML = html;
 }
 
 // Start Game
@@ -3073,6 +3382,8 @@ function startGame() {
     enemyEngineParticles = [];
     enemyLights.forEach(l => { if (l.dispose) l.dispose(); });
     enemyLights = [];
+    pickups.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
+    pickups = [];
 
     // Clean up portal if exists
     if (portal) {
@@ -3100,6 +3411,9 @@ function startGame() {
     boss = null;
     levelTransitioning = true;  // Start with transition active during level message
     lastEnemySpawn = 0;  // Reset spawn timer
+    lastShotTime = 0;
+    lastDropType = null;
+    weaponAmmo = { spread: 0 };
     bossHealthBar.classList.add('hidden');
 
     // Load level 1 theme
@@ -3109,6 +3423,7 @@ function startGame() {
     player.y = -5;
     player.z = 0;
     player.velocityX = 0;
+    player.weaponType = 'default';
 
     if (!player.mesh) {
         createPlayer();
@@ -3132,6 +3447,7 @@ function startGame() {
     updateScore();
     updateLives();
     updateLevel();
+    updateWeaponHUD();
     updateHighScoreDisplay();
     startScreen.classList.add('hidden');
     gameOverScreen.classList.add('hidden');
@@ -3170,6 +3486,7 @@ function gameLoop(timestamp = 0) {
         updateEnemies();
         updateEnemyBullets();
         updateShield();
+        updatePickups();
 
         // Create engine particles every 2 frames (30 per second at 60fps)
         engineParticleCounter++;
@@ -3284,7 +3601,7 @@ initializeBriefingScreen();
     function startFire() {
         touchFire.classList.add('active');
         tryShoot();
-        if (!fireInterval) fireInterval = setInterval(tryShoot, 150);
+        if (!fireInterval) fireInterval = setInterval(tryShoot, 50);
     }
     function stopFire() {
         touchFire.classList.remove('active');
