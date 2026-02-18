@@ -18,12 +18,18 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 <body>
     <div class="game-container">
         <div class="hud-top">
             <div class="hud-left">
                 <div class="hud-item hud-lives"><span id="lives">3</span></div>
+                <div class="hud-item hud-shield">
+                    <span class="shield-pip active"></span>
+                    <span class="shield-pip active"></span>
+                    <span class="shield-pip active"></span>
+                </div>
                 <div class="hud-item hud-score"><span id="score">0</span></div>
                 <div class="hud-item hud-level">Lv.<span id="level">1</span></div>
             </div>
@@ -57,9 +63,21 @@
         <div id="gameOver" class="game-over hidden">
             <h2>GAME OVER</h2>
             <p>Final Score: <span id="finalScore">0</span></p>
-            <p class="difficulty-display">Difficulty: <span id="gameDifficulty"></span></p>
+            <p class="difficulty-display">Difficulty: <span id="gameDifficulty"></span> &nbsp;·&nbsp; Level: <span id="gameOverLevel"></span></p>
             <div id="highScores" style="margin: 20px 0; text-align: left; max-width: 400px;"></div>
-            <button id="restartBtn">Play Again</button>
+            <div id="nameEntry" class="name-entry hidden">
+                <p class="name-entry-label">&#127942; NEW HIGH SCORE! Enter your name:</p>
+                <div class="name-entry-row">
+                    <input type="text" id="playerNameInput" class="name-input"
+                           maxlength="20" placeholder="Your name..." autocomplete="off" spellcheck="false" />
+                    <button id="submitNameBtn" class="submit-name-btn">SUBMIT</button>
+                </div>
+            </div>
+            <div class="game-over-actions">
+                <button id="restartBtn">Play Again</button>
+                <button id="shareScoreBtn" class="share-btn">Share Score</button>
+            </div>
+            <p id="shareStatus" class="share-status hidden"></p>
         </div>
         <div id="pauseScreen" class="pause-screen hidden">
             <h2>PAUSED</h2>
@@ -85,6 +103,8 @@
             </div>
         </div>
     </div>
+    <div id="scorePopupContainer"></div>
+    <div id="damageFlash"></div>
     <script src="game.js"></script>
 </body>
 </html>

@@ -26,6 +26,8 @@ const pauseScreen = document.getElementById('pauseScreen');
 const finalScoreElement = document.getElementById('finalScore');
 const gameDifficultyElement = document.getElementById('gameDifficulty');
 const restartBtn = document.getElementById('restartBtn');
+const shareScoreBtn = document.getElementById('shareScoreBtn');
+const shareStatusElement = document.getElementById('shareStatus');
 const difficultyBtns = document.querySelectorAll('.difficulty-btn');
 const touchControlsEl = document.getElementById('touchControls');
 const weaponHudEl = document.getElementById('weaponHUD');
@@ -45,7 +47,12 @@ camera.lookAt(0, -3, 25);
 
 // Renderer Setup
 const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: !isMobile,
+    powerPreference: 'high-performance',
+    preserveDrawingBuffer: true
+});
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
 renderer.shadowMap.enabled = !isMobile;
@@ -193,6 +200,15 @@ bindStateAlias('masterOutputConnected', gameState.audio, 'masterOutputConnected'
 bindStateAlias('cameraShake', gameState.effects, 'cameraShake');
 bindStateAlias('cinematicCamera', gameState.effects, 'cinematicCamera');
 
+let latestGameSummary = {
+    score: 0,
+    difficulty: 'medium',
+    level: 1,
+    highScore: 0,
+    playerName: '',
+    shareNamePrompted: false
+};
+
 // Camera shake system
 const baseCameraPosition = { x: 0, y: 12, z: -18 };
 const baseCameraLookAt = { x: 0, y: -3, z: 25 };
@@ -229,6 +245,10 @@ function easeInOutQuad(t) {
 function lerp(start, end, alpha) {
     return start + (end - start) * alpha;  // Linear interpolation
 }
+
+// Points multiplier per enemy type (applied on top of difficulty base points)
+// Destroyer x1, Interceptor x1.5 (faster/harder to hit), Battlecruiser x2 (2 hits required)
+const ENEMY_TYPE_POINTS = [1, 1.5, 2];
 
 // Difficulty settings
 const difficultySettings = {
@@ -357,7 +377,8 @@ const player = {
     wings: null,  // Reference to wings for animation
     leftEngine: null,  // Reference to left engine glow
     rightEngine: null,  // Reference to right engine glow
-    shield: true,
+    shieldStrength: 3,
+    shieldMax: 3,
     shieldMesh: null,
     invulnerable: false,
     invulnerableTimer: 0,
@@ -412,7 +433,62 @@ const SHARED_GEO = {
     bossFlash: new THREE.SphereGeometry(2, 16, 16),
     bossRing: new THREE.TorusGeometry(0.6, 0.1, 8, 16),
     bossParticle: new THREE.SphereGeometry(0.2, 6, 6),
+    enemyBullet: (() => { const g = new THREE.SphereGeometry(0.25, 8, 8); g.scale(1, 1, 2); return g; })(),
+    enemyBulletGlow: new THREE.SphereGeometry(0.15, 6, 6),
 };
+
+// Shared materials — created once to avoid per-frame GPU allocations
+const SHARED_MAT = {
+    bulletDefault: new THREE.MeshBasicMaterial({ color: 0xffff00 }),
+    bulletSpread: new THREE.MeshBasicMaterial({ color: 0x00ff66 }),
+    enemyBullet: new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.9 }),
+    enemyBulletGlow: new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.6 }),
+};
+
+// Enemy bullet pool — pre-allocated meshes toggled visible/hidden instead of create/destroy each shot
+const enemyBulletPool = [];
+(function() {
+    for (let i = 0; i < 50; i++) {
+        const mesh = new THREE.Mesh(SHARED_GEO.enemyBullet, SHARED_MAT.enemyBullet);
+        const glow = new THREE.Mesh(SHARED_GEO.enemyBulletGlow, SHARED_MAT.enemyBulletGlow);
+        glow.position.z = -0.4;
+        mesh.add(glow);
+        mesh.visible = false;
+        mesh.pooled = true;
+        scene.add(mesh);
+        enemyBulletPool.push(mesh);
+    }
+})();
+
+// Engine particle pools — pre-allocated with individual material instances for per-particle opacity
+const ENGINE_POOL_COLORS = [0xff6600, 0xff6600, 0xff6600, 0xffaa00, 0xffaa00];
+const ENEMY_ENGINE_POOL_COLORS = [0xff00ff, 0xff66ff, 0x00aaff, 0x66ccff, 0xffcc33, 0xffdd66];
+const engineParticlePool = [];
+const enemyEngineParticlePool = [];
+(function() {
+    for (let i = 0; i < 30; i++) {
+        const mat = new THREE.MeshBasicMaterial({
+            color: ENGINE_POOL_COLORS[i % ENGINE_POOL_COLORS.length],
+            transparent: true, opacity: 0.8
+        });
+        const mesh = new THREE.Mesh(SHARED_GEO.engineParticle, mat);
+        mesh.visible = false;
+        mesh.pooled = true;
+        scene.add(mesh);
+        engineParticlePool.push({ mesh, inUse: false });
+    }
+    for (let i = 0; i < 80; i++) {
+        const mat = new THREE.MeshBasicMaterial({
+            color: ENEMY_ENGINE_POOL_COLORS[i % ENEMY_ENGINE_POOL_COLORS.length],
+            transparent: true, opacity: 0.7
+        });
+        const mesh = new THREE.Mesh(SHARED_GEO.enemyEngineParticle, mat);
+        mesh.visible = false;
+        mesh.pooled = true;
+        scene.add(mesh);
+        enemyEngineParticlePool.push({ mesh, inUse: false });
+    }
+})();
 
 // Create Player Mesh - Modern Fighter Design
 function createPlayer() {
@@ -568,17 +644,19 @@ function createShieldMesh() {
 function updateShield() {
     if (!player.shieldMesh) return;
 
-    if (player.shield) {
+    if (player.shieldStrength > 0) {
         // Rotate wireframe
         const wireframe = player.shieldMesh.children[2];
         if (wireframe) {
             wireframe.rotation.y += 0.005;
             wireframe.rotation.x += 0.003;
         }
-        // Pulse opacity
+        // Pulse opacity — scales with current strength
         const shieldSphere = player.shieldMesh.children[0];
         if (shieldSphere && shieldSphere.material) {
-            shieldSphere.material.opacity = Math.sin(Date.now() * 0.003) * 0.05 + 0.15;
+            const ratio = player.shieldStrength / player.shieldMax;
+            const baseOpacity = 0.07 + ratio * 0.10;
+            shieldSphere.material.opacity = Math.sin(Date.now() * 0.003) * 0.03 + baseOpacity;
         }
     }
 
@@ -595,13 +673,67 @@ function updateShield() {
     }
 }
 
+function updateShieldVisuals() {
+    if (!player.shieldMesh) return;
+    const sphere = player.shieldMesh.children[0];
+    const wire   = player.shieldMesh.children[2];
+    const ratio  = player.shieldStrength / player.shieldMax;
+
+    if (sphere && sphere.material) {
+        sphere.material.opacity = 0.07 + ratio * 0.10;
+        const hue = ratio > 0.5 ? 0x00ccff : 0xff9900;
+        sphere.material.color.setHex(hue);
+        sphere.material.emissive.setHex(ratio > 0.5 ? 0x0088ff : 0xff6600);
+    }
+    if (wire && wire.material) {
+        wire.material.opacity = 0.06 + ratio * 0.08;
+    }
+    player.shieldMesh.visible = player.shieldStrength > 0;
+}
+
+function updateShieldHUD() {
+    const pips = document.querySelectorAll('.shield-pip');
+    pips.forEach((pip, i) => {
+        pip.classList.toggle('active', i < player.shieldStrength);
+    });
+}
+
+function damageShield() {
+    player.shieldStrength--;
+    updateShieldHUD();
+
+    if (player.shieldStrength <= 0) {
+        breakShield();
+    } else {
+        playShieldHitSound();
+        shakeCamera(0.08);
+        updateShieldVisuals();
+
+        // Brief bright flash on the shield bubble
+        if (player.shieldMesh) {
+            const sphere = player.shieldMesh.children[0];
+            if (sphere && sphere.material) {
+                sphere.material.opacity = 0.6;
+                setTimeout(() => {
+                    if (sphere.material) {
+                        const ratio = player.shieldStrength / player.shieldMax;
+                        sphere.material.opacity = 0.07 + ratio * 0.10;
+                    }
+                }, 120);
+            }
+        }
+    }
+}
+
 function breakShield() {
-    player.shield = false;
+    player.shieldStrength = 0;
     player.invulnerable = true;
     player.invulnerableTimer = 60;
 
     playShieldBreakSound();
     shakeCamera(0.2);
+    updateShieldVisuals();
+    updateShieldHUD();
 
     if (player.shieldMesh) {
         player.shieldMesh.visible = false;
@@ -671,7 +803,9 @@ function breakShield() {
 }
 
 function restoreShield() {
-    player.shield = true;
+    player.shieldStrength = player.shieldMax;
+    updateShieldVisuals();
+    updateShieldHUD();
     if (player.shieldMesh) {
         player.shieldMesh.visible = true;
     }
@@ -929,6 +1063,22 @@ function playShieldBreakSound() {
     oscillator.stop(audioContext.currentTime + 0.3);
 }
 
+function playShieldHitSound() {
+    if (isMuted) return;
+    ensureAudioContext();
+    const osc = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, audioContext.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(300, audioContext.currentTime + 0.12);
+    gainNode.gain.setValueAtTime(0.18, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.15);
+    osc.connect(gainNode);
+    gainNode.connect(masterGain);
+    osc.start();
+    osc.stop(audioContext.currentTime + 0.15);
+}
+
 function playEnemyShootSound() {
     if (isMuted) return;
     ensureAudioContext();
@@ -984,7 +1134,149 @@ document.addEventListener('keyup', (e) => {
 restartBtn.addEventListener('click', () => {
     gameOverScreen.classList.add('hidden');
     startScreen.classList.remove('hidden');
+    if (shareStatusElement) {
+        shareStatusElement.textContent = '';
+        shareStatusElement.classList.add('hidden');
+    }
 });
+
+function setShareStatus(message) {
+    if (!shareStatusElement) return;
+    shareStatusElement.textContent = message;
+    if (message) {
+        shareStatusElement.classList.remove('hidden');
+    } else {
+        shareStatusElement.classList.add('hidden');
+    }
+}
+
+function sanitizeShareName(value) {
+    if (!value) return '';
+    return value.replace(/\s+/g, ' ').trim().substring(0, 20);
+}
+
+function maybeCaptureShareName() {
+    if (latestGameSummary.shareNamePrompted) return;
+    latestGameSummary.shareNamePrompted = true;
+
+    // Use saved name from localStorage silently — no prompt()
+    const savedName = sanitizeShareName(localStorage.getItem('spaceRunShareName') || '');
+    if (!latestGameSummary.playerName && savedName) {
+        latestGameSummary.playerName = savedName;
+    }
+}
+
+function buildShareText() {
+    const name = sanitizeShareName(latestGameSummary.playerName);
+    const actorText = name ? `${name} scored` : 'I scored';
+    const runText = `${actorText} ${latestGameSummary.score} in Space Run (${latestGameSummary.difficulty.toUpperCase()} L${latestGameSummary.level}).`;
+    return {
+        title: 'Space Run',
+        text: runText,
+        combinedText: `${runText} #SpaceRun`
+    };
+}
+
+function getCurrentHighScoreValue() {
+    const parsed = Number.parseInt(highScoreElement ? highScoreElement.textContent : '', 10);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    return Math.max(0, Number(latestGameSummary.highScore) || 0, Number(latestGameSummary.score) || 0);
+}
+
+async function captureShareImage() {
+    try {
+        if (typeof html2canvas !== 'function') return null;
+        const el = document.getElementById('gameOver');
+        if (!el) return null;
+
+        // Temporarily hide action buttons and name-entry form so they don't appear in the screenshot
+        const actionsEl = el.querySelector('.game-over-actions');
+        const nameEntryEl = el.querySelector('#nameEntry');
+        const shareStatusEl = el.querySelector('#shareStatus');
+        const prevActions = actionsEl ? actionsEl.style.display : null;
+        const prevNameEntry = nameEntryEl ? nameEntryEl.style.display : null;
+        const prevShareStatus = shareStatusEl ? shareStatusEl.style.display : null;
+        if (actionsEl) actionsEl.style.display = 'none';
+        if (nameEntryEl) nameEntryEl.style.display = 'none';
+        if (shareStatusEl) shareStatusEl.style.display = 'none';
+
+        let file = null;
+        try {
+            const canvas = await html2canvas(el, {
+                backgroundColor: '#190505',
+                scale: 2,
+                logging: false,
+                useCORS: true
+            });
+            file = await new Promise((resolve) => {
+                canvas.toBlob((blob) => {
+                    if (!blob) { resolve(null); return; }
+                    resolve(new File([blob], `space-run-${Date.now()}.png`, { type: 'image/png' }));
+                }, 'image/png');
+            });
+        } finally {
+            // Always restore hidden elements
+            if (actionsEl) actionsEl.style.display = prevActions;
+            if (nameEntryEl) nameEntryEl.style.display = prevNameEntry;
+            if (shareStatusEl) shareStatusEl.style.display = prevShareStatus;
+        }
+        return file;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function shareLatestScore() {
+    maybeCaptureShareName();
+    const payload = buildShareText();
+
+    if (shareScoreBtn) shareScoreBtn.disabled = true;
+    setShareStatus('Sharing...');
+
+    try {
+        if (navigator.share) {
+            const screenshot = await captureShareImage();
+            const canShareFile = screenshot && navigator.canShare && navigator.canShare({ files: [screenshot] });
+            if (canShareFile) {
+                await navigator.share({ title: payload.title, text: payload.text, files: [screenshot] });
+                setShareStatus('Shared score with screenshot.');
+            } else {
+                await navigator.share({ title: payload.title, text: payload.text });
+                setShareStatus('Shared score.');
+            }
+        } else if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(payload.combinedText);
+            setShareStatus('Score copied to clipboard.');
+        } else {
+            const shareUrl = 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(payload.combinedText);
+            window.open(shareUrl, '_blank', 'noopener,noreferrer');
+            setShareStatus('Opened share link.');
+        }
+    } catch (e) {
+        if (e && e.name === 'AbortError') {
+            setShareStatus('');
+            return;
+        }
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(payload.combinedText);
+                setShareStatus('Score copied to clipboard.');
+            } else {
+                const shareUrl = 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(payload.combinedText);
+                window.open(shareUrl, '_blank', 'noopener,noreferrer');
+                setShareStatus('Opened share link.');
+            }
+        } catch (fallbackError) {
+            setShareStatus('Unable to share automatically.');
+        }
+    } finally {
+        if (shareScoreBtn) shareScoreBtn.disabled = false;
+    }
+}
+
+if (shareScoreBtn) {
+    shareScoreBtn.addEventListener('click', shareLatestScore);
+}
 
 difficultyBtns.forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -1220,12 +1512,8 @@ function canShoot() {
 
 function createBulletMesh(weapon, radius) {
     const geo = (radius <= 0.18) ? SHARED_GEO.bulletSpread : SHARED_GEO.bulletDefault;
-    const material = new THREE.MeshBasicMaterial({
-        color: weapon.color,
-        emissive: weapon.emissiveColor,
-        emissiveIntensity: 1
-    });
-    const mesh = new THREE.Mesh(geo, material);
+    const mat = (radius <= 0.18) ? SHARED_MAT.bulletSpread : SHARED_MAT.bulletDefault;
+    const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = Math.PI / 2;
     return mesh;
 }
@@ -1312,8 +1600,7 @@ function updateBullets() {
 
 
         if (bullet.mesh.position.z > 80 || Math.abs(bullet.mesh.position.x) > 50) {
-            disposeMesh(bullet.mesh);
-            scene.remove(bullet.mesh);
+            scene.remove(bullet.mesh); // shared geo+mat — no dispose needed
             bullets.splice(i, 1);
         }
     }
@@ -1321,35 +1608,18 @@ function updateBullets() {
 
 // Enemy Bullet System
 function createEnemyBullet(sourceX, sourceY, sourceZ, targetX, targetY, targetZ, speed) {
+    const bulletMesh = enemyBulletPool.find(m => !m.visible);
+    if (!bulletMesh) return; // pool exhausted — skip this shot
+
     const direction = new THREE.Vector3(
         targetX - sourceX,
         targetY - sourceY,
         targetZ - sourceZ
     ).normalize();
 
-    const geometry = new THREE.SphereGeometry(0.25, 8, 8);
-    geometry.scale(1, 1, 2);
-    const material = new THREE.MeshBasicMaterial({
-        color: 0xff2200,
-        transparent: true,
-        opacity: 0.9
-    });
-    const bulletMesh = new THREE.Mesh(geometry, material);
     bulletMesh.position.set(sourceX, sourceY, sourceZ);
     bulletMesh.lookAt(targetX, targetY, targetZ);
-
-    // Glow trail
-    const glowGeometry = new THREE.SphereGeometry(0.15, 6, 6);
-    const glowMaterial = new THREE.MeshBasicMaterial({
-        color: 0xff6600,
-        transparent: true,
-        opacity: 0.6
-    });
-    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-    glow.position.z = -0.4;
-    bulletMesh.add(glow);
-
-    scene.add(bulletMesh);
+    bulletMesh.visible = true;
     enemyBullets.push({
         mesh: bulletMesh,
         velocity: direction.multiplyScalar(speed || 0.5),
@@ -1368,8 +1638,7 @@ function updateEnemyBullets() {
             bullet.mesh.position.z > 100 ||
             Math.abs(bullet.mesh.position.x) > 50 ||
             Math.abs(bullet.mesh.position.y) > 30) {
-            disposeMesh(bullet.mesh);
-            scene.remove(bullet.mesh);
+            bullet.mesh.visible = false; // return to pool
             enemyBullets.splice(i, 1);
         }
     }
@@ -1759,6 +2028,7 @@ function defeatBoss() {
     boss.mesh.traverse((child) => {
         if (child.isLight && child.dispose) child.dispose();
     });
+    const bossDeathPos = boss.mesh.position.clone();
     disposeMesh(boss.mesh);
     scene.remove(boss.mesh);
     boss = null;
@@ -1766,9 +2036,9 @@ function defeatBoss() {
     levelTransitioning = true;  // Prevent boss spawning and shooting during transition
 
     // Clear all bullets from screen
-    bullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
+    bullets.forEach(b => { scene.remove(b.mesh); }); // shared geo+mat — no dispose
     bullets = [];
-    enemyBullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
+    enemyBullets.forEach(b => { b.mesh.visible = false; }); // return to pool
     enemyBullets = [];
     bossHealthBar.classList.add('hidden');
 
@@ -1778,6 +2048,7 @@ function defeatBoss() {
     const levelBonus = Math.round(baseBonus * bonusMultiplier);
     score += levelBonus;
     updateScore();
+    createScorePopup(bossDeathPos.x, bossDeathPos.y, bossDeathPos.z, levelBonus);
 
     // Boss counts as 3 kills toward extra life drop
     targetsHit += 3;
@@ -2450,13 +2721,19 @@ function createEnemy(type) {
         mesh: mesh,
         speed: baseSpeed * levelMultiplier,  // Faster with each level
         type: type,
+        hp: type === 2 ? 2 : 1,  // Battlecruiser takes 2 hits; others die in 1
         lateralSpeed: (Math.random() - 0.5) * 0.25 * levelMultiplier,
         lateralDirection: Math.random() < 0.5 ? -1 : 1,  // Initial direction
         waveOffset: Math.random() * Math.PI * 2,  // Random starting point in wave
         waveAmplitude: 0.5 + Math.random() * 1.0,  // Wave intensity
         fireTimer: Math.floor(Math.random() * 120) + 60,
         fireInterval: settings.enemyFireInterval.min +
-            Math.floor(Math.random() * (settings.enemyFireInterval.max - settings.enemyFireInterval.min))
+            Math.floor(Math.random() * (settings.enemyFireInterval.max - settings.enemyFireInterval.min)),
+        // Interceptor dash — periodic burst of lateral speed toward player
+        dashCooldown: type === 1 ? (90 + Math.floor(Math.random() * 120)) : 0,
+        dashing: false,
+        dashDuration: 0,
+        dashTargetX: 0
     };
 
     const x = (Math.random() - 0.5) * 30;
@@ -2608,6 +2885,23 @@ function updateEnemies() {
         }
         enemy.mesh.rotation.z = Math.sin(enemy.waveOffset) * 0.1;  // Slight roll with wave
 
+        // Interceptor: periodic dash toward player X position
+        if (enemy.type === 1) {
+            enemy.dashCooldown--;
+            if (enemy.dashCooldown <= 0 && !enemy.dashing) {
+                enemy.dashing = true;
+                enemy.dashDuration = 25;
+                enemy.dashTargetX = player.x + (Math.random() - 0.5) * 8;
+                enemy.dashCooldown = 90 + Math.floor(Math.random() * 120);
+            }
+            if (enemy.dashing) {
+                const dx = enemy.dashTargetX - enemy.mesh.position.x;
+                enemy.mesh.position.x += dx * 0.12;
+                enemy.dashDuration--;
+                if (enemy.dashDuration <= 0) enemy.dashing = false;
+            }
+        }
+
         // Animate enemy parts (rings, wings, weapons)
         animateEnemyParts(enemy);
 
@@ -2639,15 +2933,31 @@ function updateEnemies() {
             }
 
             if (enemy.fireTimer <= 0) {
-                createEnemyBullet(
-                    enemy.mesh.position.x,
-                    enemy.mesh.position.y,
-                    enemy.mesh.position.z,
-                    player.x,
-                    player.y,
-                    player.z,
-                    0.4 + (currentLevel - 1) * 0.02
-                );
+                const spd = 0.4 + (currentLevel - 1) * 0.02;
+                if (enemy.type === 2) {
+                    // Battlecruiser: spread shot — 3 bullets in a fan
+                    [-18, 0, 18].forEach(xOffset => {
+                        createEnemyBullet(
+                            enemy.mesh.position.x,
+                            enemy.mesh.position.y,
+                            enemy.mesh.position.z,
+                            player.x + xOffset,
+                            player.y,
+                            player.z,
+                            spd * 0.85
+                        );
+                    });
+                } else {
+                    createEnemyBullet(
+                        enemy.mesh.position.x,
+                        enemy.mesh.position.y,
+                        enemy.mesh.position.z,
+                        player.x,
+                        player.y,
+                        player.z,
+                        spd
+                    );
+                }
                 playEnemyShootSound();
                 enemy.fireTimer = enemy.fireInterval;
 
@@ -2665,6 +2975,7 @@ function updateEnemies() {
             enemies.splice(i, 1);
             lives--;
             updateLives();
+            triggerDamageFlash();
         }
     }
 }
@@ -2694,13 +3005,32 @@ function checkCollisions() {
             const xHitRadius = enemy.type === 2 ? 2.0 : 1.5;
 
             if (dy < yTolerance && dx < xHitRadius) {
-                createExplosion(enemyPos.x, enemyPos.y, enemyPos.z);
-
                 if (!bullet.piercing) {
-                    disposeMesh(bullet.mesh);
-                    scene.remove(bullet.mesh);
+                    scene.remove(bullet.mesh); // shared geo+mat — no dispose
                     bullets.splice(bIndex, 1);
                 }
+
+                enemy.hp--;
+
+                // Hit flash — always shown, even when enemy survives
+                const flashParts = enemy.cached.allMaterials;
+                for (let fi = 0; fi < flashParts.length; fi++) {
+                    const mat = flashParts[fi].material;
+                    if (mat && mat.emissive) {
+                        const orig = mat.emissiveIntensity;
+                        mat.emissiveIntensity = 2.0;
+                        setTimeout(() => { if (mat) mat.emissiveIntensity = orig; }, 100);
+                    }
+                }
+
+                if (enemy.hp > 0) {
+                    // Damaged but not dead (e.g. Battlecruiser first hit)
+                    if (!bullet.piercing) break;
+                    continue;
+                }
+
+                // Enemy killed
+                createExplosion(enemyPos.x, enemyPos.y, enemyPos.z);
 
                 // Start death animation instead of immediate removal
                 enemy.dying = true;
@@ -2711,19 +3041,10 @@ function checkCollisions() {
                     (Math.random() - 0.5) * 0.3
                 );
 
-                // Hit flash
-                const flashParts = enemy.cached.allMaterials;
-                for (let fi = 0; fi < flashParts.length; fi++) {
-                    const mat = flashParts[fi].material;
-                    if (mat.emissive) {
-                        const orig = mat.emissiveIntensity;
-                        mat.emissiveIntensity = 2.0;
-                        setTimeout(() => { if (mat) mat.emissiveIntensity = orig; }, 100);
-                    }
-                }
-
-                score += difficultySettings[difficulty].enemyPoints * currentLevel;
+                const addedPoints = Math.round(difficultySettings[difficulty].enemyPoints * (ENEMY_TYPE_POINTS[enemy.type] || 1) * currentLevel);
+                score += addedPoints;
                 updateScore();
+                createScorePopup(enemyPos.x, enemyPos.y, enemyPos.z, addedPoints);
 
                 // Track enemies defeated for boss trigger
                 enemiesDefeatedThisLevel++;
@@ -2761,11 +3082,12 @@ function checkCollisions() {
             scene.remove(enemy.mesh);
             enemies.splice(index, 1);
 
-            if (player.shield) {
-                breakShield();
+            if (player.shieldStrength > 0) {
+                damageShield();
             } else {
                 lives--;
                 updateLives();
+                triggerDamageFlash();
             }
             break;  // Only one collision per frame — invulnerability handles the rest
         }
@@ -2785,11 +3107,12 @@ function checkEnemyBulletCollisions() {
             scene.remove(bullet.mesh);
             enemyBullets.splice(i, 1);
 
-            if (player.shield) {
-                breakShield();
+            if (player.shieldStrength > 0) {
+                damageShield();
             } else {
                 lives--;
                 updateLives();
+                triggerDamageFlash();
             }
             break;
         }
@@ -2915,15 +3238,12 @@ function collectPickup(pickup) {
             }
             break;
         case 'shield':
-            if (!player.shield) {
-                player.shield = true;
-                if (player.shieldMesh) {
-                    player.shieldMesh.visible = true;
-                } else {
-                    createShieldMesh();
-                }
+            if (player.shieldStrength < player.shieldMax) {
+                player.shieldStrength++;
+                updateShieldVisuals();
+                updateShieldHUD();
+                showWeaponText('SHIELD +1');
             }
-            showWeaponText('SHIELD UP');
             break;
     }
 }
@@ -3097,32 +3417,30 @@ function createEngineParticles() {
     ];
 
     enginePositions.forEach(offset => {
-        const material = new THREE.MeshBasicMaterial({
-            color: Math.random() > 0.3 ? 0xff6600 : 0xffaa00,
-            transparent: true,
-            opacity: 0.8
-        });
-        const particleMesh = new THREE.Mesh(SHARED_GEO.engineParticle, material);
+        const poolItem = engineParticlePool.find(p => !p.inUse);
+        if (!poolItem) return;
 
-        // Position at engine location (in world space)
-        particleMesh.position.set(
+        poolItem.inUse = true;
+        poolItem.mesh.visible = true;
+        poolItem.mesh.material.opacity = 0.8;
+        poolItem.mesh.material.color.setHex(Math.random() > 0.3 ? 0xff6600 : 0xffaa00);
+        poolItem.mesh.scale.set(1, 1, 1);
+        poolItem.mesh.position.set(
             player.x + offset.x,
             player.y + offset.y,
             player.z + offset.z
         );
 
-        const particle = {
-            mesh: particleMesh,
+        engineParticles.push({
+            mesh: poolItem.mesh,
+            poolItem: poolItem,
             velocity: new THREE.Vector3(
-                (Math.random() - 0.5) * 0.1,  // Small random spread
                 (Math.random() - 0.5) * 0.1,
-                -0.4  // Move backward (away from ship)
+                (Math.random() - 0.5) * 0.1,
+                -0.4
             ),
-            life: 12  // Short-lived (about 200ms at 60fps)
-        };
-
-        scene.add(particleMesh);
-        engineParticles.push(particle);
+            life: 12
+        });
     });
 }
 
@@ -3137,8 +3455,9 @@ function updateEngineParticles() {
         particle.mesh.scale.multiplyScalar(0.95);
 
         if (particle.life <= 0) {
-            disposeMesh(particle.mesh);
-            scene.remove(particle.mesh);
+            particle.mesh.visible = false;
+            if (particle.poolItem) particle.poolItem.inUse = false;
+            else { disposeMesh(particle.mesh); scene.remove(particle.mesh); }
             engineParticles.splice(i, 1);
         }
     }
@@ -3160,21 +3479,26 @@ function createEnemyEngineParticles() {
         const scale = enemy.type === 2 ? 0.7 : 0.8;
 
         positions.forEach(offset => {
-            const mat = new THREE.MeshBasicMaterial({
-                color: Math.random() > 0.4 ? typeColors[0] : typeColors[1],
-                transparent: true,
-                opacity: 0.7
-            });
-            const p = new THREE.Mesh(SHARED_GEO.enemyEngineParticle, mat);
+            const poolItem = enemyEngineParticlePool.find(p => !p.inUse);
+            if (!poolItem) return;
+
+            const color = Math.random() > 0.4 ? typeColors[0] : typeColors[1];
+            poolItem.inUse = true;
+            poolItem.mesh.visible = true;
+            poolItem.mesh.material.opacity = 0.7;
+            poolItem.mesh.material.color.setHex(color);
+            poolItem.mesh.scale.set(scale, scale, scale);
+
             const worldPos = new THREE.Vector3(
                 offset.x * scale, offset.y * scale, offset.z * scale
             );
             worldPos.applyQuaternion(enemy.mesh.quaternion);
             worldPos.add(enemy.mesh.position);
-            p.position.copy(worldPos);
-            scene.add(p);
+            poolItem.mesh.position.copy(worldPos);
+
             enemyEngineParticles.push({
-                mesh: p,
+                mesh: poolItem.mesh,
+                poolItem: poolItem,
                 velocity: new THREE.Vector3(
                     (Math.random() - 0.5) * 0.06,
                     (Math.random() - 0.5) * 0.06,
@@ -3194,8 +3518,9 @@ function updateEnemyEngineParticles() {
         p.mesh.material.opacity = (p.life / 10) * 0.7;
         p.mesh.scale.multiplyScalar(0.93);
         if (p.life <= 0) {
-            disposeMesh(p.mesh);
-            scene.remove(p.mesh);
+            p.mesh.visible = false;
+            if (p.poolItem) p.poolItem.inUse = false;
+            else { disposeMesh(p.mesh); scene.remove(p.mesh); }
             enemyEngineParticles.splice(i, 1);
         }
     }
@@ -3337,8 +3662,19 @@ async function isTopScore(score) {
     return highScores.length < 5 || score > highScores[highScores.length - 1].score;
 }
 
+let lastScoreSubmitTime = 0;
+
 async function addHighScore(name, score, difficulty) {
-    const entry = { name, score, difficulty, date: new Date().toLocaleDateString() };
+    // Rate limiting — prevent rapid repeat submissions
+    const now = Date.now();
+    if (now - lastScoreSubmitTime < 5000) return;
+    lastScoreSubmitTime = now;
+
+    // Sanitize inputs before writing to Firebase
+    const safeName = String(name).trim().slice(0, 20) || 'Anonymous';
+    const safeScore = (typeof score === 'number' && isFinite(score) && score >= 0) ? Math.floor(score) : 0;
+    const safeDifficulty = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium';
+    const entry = { name: safeName, score: safeScore, difficulty: safeDifficulty, date: new Date().toLocaleDateString() };
 
     // Always save to localStorage first so scores are never lost
     const localScores = loadLocalHighScores();
@@ -3375,6 +3711,32 @@ async function addHighScore(name, score, difficulty) {
 // Update UI
 function updateScore() {
     scoreElement.textContent = score;
+}
+
+function createScorePopup(worldX, worldY, worldZ, points) {
+    const container = document.getElementById('scorePopupContainer');
+    if (!container) return;
+    // Project 3D world position to 2D screen coordinates
+    const vec = new THREE.Vector3(worldX, worldY, worldZ);
+    vec.project(camera);
+    const sx = (vec.x + 1) / 2 * window.innerWidth;
+    const sy = (-vec.y + 1) / 2 * window.innerHeight;
+    if (sx < 0 || sx > window.innerWidth || sy < 0 || sy > window.innerHeight) return;
+    const el = document.createElement('div');
+    el.className = 'score-popup';
+    el.textContent = '+' + points;
+    el.style.left = sx + 'px';
+    el.style.top = sy + 'px';
+    container.appendChild(el);
+    setTimeout(() => el.remove(), 900);
+}
+
+function triggerDamageFlash() {
+    const flash = document.getElementById('damageFlash');
+    if (!flash) return;
+    flash.classList.remove('active');
+    void flash.offsetWidth; // force reflow to restart animation
+    flash.classList.add('active');
 }
 
 function updateLevel() {
@@ -3426,11 +3788,14 @@ async function endGame() {
     }
 
     // Clean up enemy bullets, pickups, and engine particles
-    enemyBullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
+    enemyBullets.forEach(b => { b.mesh.visible = false; }); // return to pool
     enemyBullets = [];
     pickups.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
     pickups = [];
-    enemyEngineParticles.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
+    enemyEngineParticles.forEach(p => {
+        p.mesh.visible = false;
+        if (p.poolItem) p.poolItem.inUse = false;
+    });
     enemyEngineParticles = [];
 
     if (touchControlsEl) touchControlsEl.style.pointerEvents = 'none';
@@ -3438,22 +3803,56 @@ async function endGame() {
 
     finalScoreElement.textContent = score;
     gameDifficultyElement.textContent = difficulty.toUpperCase();
+    const gameOverLevelEl = document.getElementById('gameOverLevel');
+    if (gameOverLevelEl) gameOverLevelEl.textContent = currentLevel;
+    latestGameSummary = {
+        score,
+        difficulty,
+        level: currentLevel,
+        highScore: getCurrentHighScoreValue(),
+        playerName: sanitizeShareName(localStorage.getItem('spaceRunShareName') || ''),
+        shareNamePrompted: false
+    };
+    if (shareScoreBtn) shareScoreBtn.disabled = false;
+    setShareStatus('');
 
-    // Check for high score
+    // Show game over screen before asking for name
+    gameOverScreen.classList.remove('hidden');
+    cancelAnimationFrame(animationId);
+
+    // In-game name entry (replaces browser prompt)
     if (await isTopScore(score)) {
-        const playerName = prompt('TOP 5 SCORE! Enter your name:', 'Player');
-        if (playerName) {
-            const highScores = await addHighScore(playerName.substring(0, 20), score, difficulty);
-            displayHighScores(highScores);
-        } else {
-            displayHighScores(await loadHighScores());
-        }
+        const nameEntry = document.getElementById('nameEntry');
+        const nameInput = document.getElementById('playerNameInput');
+        const submitBtn = document.getElementById('submitNameBtn');
+
+        const savedName = sanitizeShareName(localStorage.getItem('spaceRunShareName') || '');
+        nameInput.value = savedName;
+        nameEntry.classList.remove('hidden');
+        setTimeout(() => nameInput.focus(), 50);
+
+        await new Promise(resolve => {
+            async function doSubmit() {
+                const name = (nameInput.value.trim() || 'Anonymous').substring(0, 20);
+                latestGameSummary.playerName = sanitizeShareName(name);
+                latestGameSummary.shareNamePrompted = true;
+                if (latestGameSummary.playerName) {
+                    localStorage.setItem('spaceRunShareName', latestGameSummary.playerName);
+                }
+                const highScores = await addHighScore(name, score, difficulty);
+                displayHighScores(highScores);
+                nameEntry.classList.add('hidden');
+                resolve();
+            }
+            submitBtn.addEventListener('click', doSubmit, { once: true });
+            nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSubmit(); }, { once: true });
+        });
     } else {
         displayHighScores(await loadHighScores());
     }
 
-    gameOverScreen.classList.remove('hidden');
-    cancelAnimationFrame(animationId);
+    await updateHighScoreDisplay();
+    latestGameSummary.highScore = Math.max(getCurrentHighScoreValue(), score);
 }
 
 function displayHighScores(scores) {
@@ -3493,17 +3892,24 @@ function displayHighScores(scores) {
 // Start Game
 function startGame() {
     // Clean up previous game — dispose GPU resources
-    bullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
+    bullets.forEach(b => { scene.remove(b.mesh); }); // shared geo+mat — no dispose
     enemies.forEach(e => { disposeMesh(e.mesh); scene.remove(e.mesh); });
     particles.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
-    engineParticles.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
+    engineParticles.forEach(p => {
+        p.mesh.visible = false;
+        if (p.poolItem) p.poolItem.inUse = false;
+        else { disposeMesh(p.mesh); scene.remove(p.mesh); }
+    });
     bullets = [];
     enemies = [];
     particles = [];
     engineParticles = [];
-    enemyBullets.forEach(b => { disposeMesh(b.mesh); scene.remove(b.mesh); });
+    enemyBullets.forEach(b => { b.mesh.visible = false; }); // return to pool
     enemyBullets = [];
-    enemyEngineParticles.forEach(p => { disposeMesh(p.mesh); scene.remove(p.mesh); });
+    enemyEngineParticles.forEach(p => {
+        p.mesh.visible = false;
+        if (p.poolItem) p.poolItem.inUse = false;
+    });
     enemyEngineParticles = [];
     enemyLights.forEach(l => { if (l.dispose) l.dispose(); });
     enemyLights = [];
@@ -3560,14 +3966,14 @@ function startGame() {
     player.mesh.rotation.y = 0;
 
     // Initialize shield
-    player.shield = true;
+    player.shieldStrength = player.shieldMax;
     player.invulnerable = false;
     player.invulnerableTimer = 0;
     if (!player.shieldMesh) {
         createShieldMesh();
-    } else {
-        player.shieldMesh.visible = true;
     }
+    updateShieldVisuals();
+    updateShieldHUD();
 
     updateScore();
     updateLives();

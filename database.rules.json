@@ -1,0 +1,11 @@
+{
+  "rules": {
+    "highScores": {
+      ".read": true,
+      ".write": true,
+      "$score": {
+        ".validate": "newData.hasChildren(['name', 'score', 'difficulty', 'date']) && newData.child('score').isNumber() && newData.child('score').val() >= 0 && newData.child('name').isString() && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 20 && newData.child('difficulty').isString()"
+      }
+    }
+  }
+}
