@@ -1,275 +1,219 @@
-# Space Shooter 3D - Project Documentation
+# Space Run — Project Documentation
 
-## Project Overview
+## Overview
 
-A modern 3D space shooter game built with Three.js featuring a grey metallic fighter ship battling against three types of alien enemies. The game includes difficulty levels, high score tracking, and smooth physics-based movement.
+A 3D space shooter built with Three.js. The player pilots the experimental fighter *Horizon* through a
+20-level campaign (Operation Deep Horizon) battling alien enemies and bosses across four story acts,
+ending with a victory screen at level 20.
+
+**Live repo**: https://github.com/kgram1989/space-run
+
+---
 
 ## File Structure
 
 ```
 C:\Users\grkas\Game\
-├── index.html       # Main HTML structure with game UI
-├── style.css        # Glassmorphism styling and animations
-├── game.js          # Core game logic with Three.js (main file)
-└── CLAUDE.md        # This documentation file
+├── index.html          # HTML structure, HUD, overlays, CDN scripts
+├── style.css           # Glassmorphism UI, HUD, animations, mobile overrides
+├── game.js             # All game logic (~4300 lines, single file)
+├── database.rules.json # Firebase Realtime Database security rules
+└── CLAUDE.md           # This file
 ```
 
-## Technology Stack
+---
 
-- **Three.js v0.160.0** - 3D graphics library via CDN
-- **Vanilla JavaScript** - No additional frameworks
-- **CSS3** - Modern glassmorphism effects with backdrop-filter
-- **LocalStorage** - Persistent high score tracking
+## Tech Stack
 
-## Game Architecture
+| Library | Version | How loaded |
+|---------|---------|-----------|
+| Three.js | 0.160.0 | CDN |
+| Firebase (compat) | 10.x | CDN (app + database) |
+| html2canvas | 1.4.1 | CDN — screenshot for share |
 
-### Camera Setup
-- **Perspective**: 60° FOV, positioned at (0, 12, -18) looking at (0, -3, 25)
-- **Style**: 45-degree chase camera angle, "flying through space" perspective
-- **Result**: Modern space shooter aesthetic with clear depth perception
+No build step. All vanilla JS.
 
-### Player Ship
-- **Design**: Grey metallic fighter with wings, cockpit, and engine thrusters
-- **Position**: Fixed Y position at -5 (center)
-- **Movement**: Horizontal only (left/right) with acceleration-based physics
-- **Physics**:
-  - Acceleration: 0.03 units/frame
-  - Max speed: 0.4 units/frame
-  - Friction: 0.92 (decay multiplier)
-- **Weapons**: Fires 3 bullets simultaneously (center, left wing, right wing)
-- **Scale**: 1.0x (compact and precise)
+---
+
+## Architecture
+
+### `gameState` + `bindStateAlias`
+
+All mutable game state lives in `gameState` (defined ~line 78), grouped into sub-objects:
+- `gameState.runtime` — gameRunning, score, lives, difficulty, etc.
+- `gameState.progression` — currentLevel, bossActive, levelTransitioning, etc.
+- `gameState.entities` — boss, portal, bullets, enemies, pickups, etc.
+- `gameState.timers` — levelTransitionTimeout, bossPortalTimeout, portalAnimationId
+
+`bindStateAlias(name, target, key)` (~line 152) creates a global variable that reads/writes
+`target[key]`. This means code like `currentLevel++` actually updates `gameState.progression.currentLevel`.
+
+**Rule**: Any new timeout/interval/animationFrame that must survive restart must be tracked in
+`gameState.timers` and cleared in `endGame()`.
+
+### Shared Geometry / Object Pooling
+
+Enemy bullets use `SHARED_GEO.enemyBullet` and `SHARED_MAT.enemyBullet` — a single geometry and
+material instance shared across all enemy bullet meshes.
+
+**Critical rule**: NEVER call `disposeMesh()` or `scene.remove()` directly on pooled/shared-geometry
+meshes. To "destroy" an enemy bullet, set `bullet.mesh.visible = false` to return it to the pool.
+Calling `disposeMesh()` on shared geometry permanently destroys it for all future bullets.
+
+Player bullets also use shared geometry — on boss hit, use `scene.remove(bullet.mesh)` only, no dispose.
+
+`disposeMesh()` is only safe on meshes with **unique** geometry (enemies, boss, pickups, particles).
+
+---
+
+## Game Systems
+
+### Player
+
+```
+player.x / y / z     — position (y fixed at -5)
+player.velocityX      — horizontal momentum
+player.shieldStrength — 0–3 (integer, replaces old boolean shield)
+player.shieldMax      — 3
+player.weaponType     — 'default' | 'spread'
+player.invulnerable   — bool, set after taking damage
+player.invulnerableTimer — frame countdown
+```
+
+Shield functions: `damageShield()`, `breakShield()`, `restoreShield()`, `updateShieldVisuals()`,
+`updateShieldHUD()`. Shield has 3 hit points shown as cyan pips in the HUD.
 
 ### Enemy Types
 
-**1. Alien Destroyer (Type 0)**
-- Design: Octahedron core with energy rings
-- Color: Magenta (0xff00ff)
-- Scale: 0.6x
+| Type | Name | Color | HP | Notes |
+|------|------|-------|-----|-------|
+| 0 | Alien Destroyer | Magenta `#ff00ff` | 1 | Octahedron with orbiting armor |
+| 1 | Interceptor | Electric blue `#00aaff` | 1 | Dash attacks toward player X |
+| 2 | Battlecruiser | Gunmetal `#556677` + gold | 2 | Requires 2 hits |
 
-**2. Interceptor (Type 1)**
-- Design: Angular diamond with side wings
-- Color: Green (0x00ff00)
-- Scale: 0.6x
+Spawned uniformly at random (33% each). Speed scales with `sqrt(currentLevel - 1) * scalingFactor`.
 
-**3. Battlecruiser (Type 2)**
-- Design: Heavy disk with energy dome and weapons
-- Color: Orange (0xff6600)
-- Scale: 0.5x
-- Hit radius: 2.0 (larger due to size)
+### Boss ("The Core")
 
-All enemies have:
-- Point lights for glow effects
-- Lateral movement (side-to-side)
-- Forward movement toward player
-- Y-axis rotation for visual effect
+- Dark red octahedron with rotating reactor layers, 8 cannons, hex wireframe shield
+- Appears after `enemiesRequiredForBoss` kills (`10 + currentLevel * 2`)
+- Health: `Math.min(15 + currentLevel * 5, 60)` × difficulty multiplier (capped at 60 base)
+- After defeat: drops weapon pickup (+2.5 x offset) and optionally extra-life pickup (-2.5 x offset)
+- `defeatBoss()` → `bossPortalTimeout` → `createPortal()` / `animatePortalEntry()` / `triggerVictory()`
 
-### Difficulty Settings
+### Level System
 
-| Difficulty | Enemy Speed | Spawn Interval | Points |
-|------------|-------------|----------------|--------|
-| Easy       | 0.1 - 0.2   | 2000ms        | 10     |
-| Medium     | 0.2 - 0.35  | 1400ms        | 15     |
-| Hard       | 0.35 - 0.55 | 900ms         | 25     |
+20 levels across 4 acts defined in `GAME_NARRATIVE.levels` (~line 317):
 
-### Game Mechanics
+| Act | Levels | Theme |
+|-----|--------|-------|
+| 1 — Departure | 1–5 | Dark blue bg, white stars |
+| 2 — The Revelation | 6–10 | Dark blue bg, white stars |
+| 3 — The Truth | 11–15 | Dark blue bg, white stars |
+| 4 — The Gate | 16–18 same, 19 orange-red, 20 dark red |
 
-**Lives System**:
-- Start with 3 lives
-- Lose life when enemy reaches player or collides with ship
-- Gain 1 life per 10 targets hit (max 3 lives)
+Each level entry: `{ id, systemName, description, theme: { background: { color }, starColor } }`
 
-**Scoring**:
-- Points awarded based on difficulty setting
-- Top 5 high scores saved to LocalStorage
-- High score displayed during gameplay
+`loadLevelTheme(n)` sets scene background, fog color, and updates star material colors via
+`starField.layers` (returned by `createStars()`).
 
-**Controls**:
-- ← → Arrow keys: Move left/right
-- Space: Shoot bullets
-- ESC: Exit to menu (keeps high score eligibility)
+**Victory**: After level 20 boss, `triggerVictory()` shows a closing `showMessageBox()` then calls
+`endGame()` with the `#gameOverTitle` text changed to "MISSION COMPLETE". The restart handler resets
+it back to "GAME OVER".
 
-**Collision Detection**:
-- Distance-based with separate X/Y tolerances
-- Z-axis proximity check (< 3 units)
-- Y tolerance: 2.5 units (forgiving vertical alignment)
-- X radius: 1.5 units (1.8 for Type 2)
+### Weapons
 
-### Visual Effects
+- **BLASTERS** (default) — single yellow bolt per wing, unlimited
+- **SPREAD SHOT** — green spread pattern, ammo-limited (shown in HUD)
 
-**Lighting**:
-- Ambient light (0x404060, intensity 0.5)
-- Directional light (0xffffff, intensity 0.8) at (10, 20, 30)
-- Point lights on each enemy (type-specific colors)
+Weapon drops from boss (guaranteed) and enemy kills (random). Ammo tracked in `weaponAmmo.spread`.
 
-**Particles**:
-- 25 particles per explosion
-- Yellow (0xffff00) and orange (0xff6600) colors
-- Physics-based trajectories with decay
-- 35-frame lifetime
+### Audio
 
-**Star Field**:
-- 300 point stars with varying depths
-- Animated forward movement for speed effect
-- Continuous loop (reset at z = -20)
+Web Audio API with a shared `masterGain` node. `ensureAudioContext()` is **synchronous** — it calls
+`audioContext.resume().then(...)` fire-and-forget. Do NOT make it async or await it; all sound
+functions call it synchronously before creating oscillators.
 
-**Materials**:
-- MeshStandardMaterial for ships (metalness, roughness)
-- Emissive properties for glowing effects
-- Transparent materials for cockpit and effects
+Mute state stored in `localStorage('spaceRunMuted')`. `applyMuteState()` sets `masterGain.gain`.
 
-## Development Guidelines
+### High Score System
 
-### Code Organization
+**Primary**: Firebase Realtime Database (top 5 global, stored at `/highscores`)
+**Fallback**: localStorage key `spaceShooterHighScores`
 
-**Player Movement** (movePlayer function):
-- Acceleration-based physics for smooth control
-- Boundary checking at x = ±35
-- Horizontal movement only (Y fixed at -5)
+`checkHighScore(score)` → `isTopScore(score)` (async, checks Firebase) → shows `#nameEntry` form
+in-game if new high score. `submitHighScore(name, score)` writes to Firebase and localStorage.
 
-**Bullet System** (shootBullet function):
-- 3 bullets per shot from defined positions
-- Speed: 1.2 units/frame forward
-- Auto-removed when z > 80
+---
 
-**Enemy Spawning** (createEnemy function):
-- Random X position: ±15 from center
-- Y position: -5 ± 2 (around player height)
-- Z spawn: 70 (far distance)
-- Lateral movement with boundary reversal
+## HUD Structure
 
-**Game Loop**:
-- 60 FPS target with requestAnimationFrame
-- Update order: player → bullets → enemies → particles → stars
-- Collision check after all updates
-- Enemy spawn based on difficulty timer
-
-### Performance Considerations
-
-**Optimizations**:
-- Backward iteration for safe array splicing
-- Object removal from scene before array splice
-- Particle pooling (max ~25 per explosion)
-- Star field uses BufferGeometry for efficiency
-
-**Targets**:
-- 60 FPS on mid-range hardware
-- < 50 draw calls per frame
-- < 3 second initial load
-
-### Common Modifications
-
-**Adjusting Difficulty**:
-- Modify `difficultySettings` object (lines 39-55)
-- Change spawn intervals, enemy speeds, or points
-
-**Enemy Behavior**:
-- `lateralSpeed` in createEnemy (line 493): Controls side-to-side movement
-- `enemy.speed` range (line 490): Controls forward speed
-
-**Player Movement Feel**:
-- `acceleration` (line 67): How quickly ship speeds up
-- `maxSpeed` (line 66): Top speed limit
-- `friction` (line 68): How quickly ship slows down
-
-**Collision Sensitivity**:
-- `yTolerance` (line 603): Vertical hit detection range
-- `xHitRadius` (line 604): Horizontal hit detection range
-- `zDiff` threshold (line 596): Z-axis proximity check
-
-**Visual Tweaks**:
-- Ship scale: `group.scale.set()` in createPlayer (line 171)
-- Enemy scale: `group.scale.set()` in each enemy type (lines 374, 425, 484)
-- Camera position: `camera.position.set()` (line 21)
-
-## Known Constraints
-
-1. **No Vertical Movement**: Player stays at fixed Y position for gameplay simplicity
-2. **Single-file Architecture**: All game logic in one file for maintainability
-3. **Fixed Spawn Distance**: Enemies always spawn at z = 70
-4. **Three Bullet Pattern**: Center + wings configuration is hardcoded
-5. **Top 5 Scores Only**: LocalStorage limits to 5 high score entries
-
-## High Score System
-
-**Storage Format**:
-```javascript
-{
-  name: string,      // Player name (max 20 chars)
-  score: number,     // Final score
-  difficulty: string, // 'easy', 'medium', or 'hard'
-  date: string       // Locale date string
-}
+```
+.hud-top
+  .hud-left
+    .hud-item.hud-lives      — ❤ lives count
+    .hud-item.hud-shield     — 3x .shield-pip (cyan dots, active/inactive)
+    .hud-item.hud-score      — score
+    .hud-item.hud-level      — Lv.N
+    #weaponHUD.weapon-hud    — weapon name (always here via syncWeaponHudPlacement)
+  .hud-right
+    #pauseBtn
+    #muteBtn
 ```
 
-**LocalStorage Key**: `'spaceShooterHighScores'`
+`syncWeaponHudPlacement()` always places `#weaponHUD` inside `.hud-left` after `.hud-level`
+(the old desktop/mobile conditional was removed — it's always inline).
 
-**Functions**:
-- `loadHighScores()`: Retrieves saved scores
-- `addHighScore(name, score, difficulty)`: Adds and sorts new score
-- `isTopScore(score)`: Checks if score qualifies for top 5
-- `displayHighScores(scores)`: Renders scores to game over screen
+---
 
-## Design Decisions
+## Share / Screenshot
 
-**Why Fixed Y Position?**
-- Previous vertical movement system was confusing
-- Simplified targeting and gameplay flow
-- Removed unnecessary complexity
+`shareLatestScore()` → `captureShareImage()` → `navigator.share({ files: [screenshot] })`
 
-**Why Acceleration Physics?**
-- Provides precise control for targeting
-- Feels more realistic and satisfying
-- Prevents "ice skating" or overly twitchy movement
+`captureShareImage()` uses `html2canvas` on a **clone** of `#gameOver` placed in a full-screen
+fixed overlay (`z-index: 99999`) for correct origin measurement. Key iOS workarounds:
+- Clone gets `backdrop-filter: none` (renders black on iOS Safari otherwise)
+- Clone's `h2.className = ''` removes the gradient CSS rule; plain `color: #ff4400` used instead
+- `scale: 1` on iOS (detected via userAgent + `maxTouchPoints`), `devicePixelRatio` on desktop
+- Clone is removed in `finally` block
 
-**Why Distance-Based Collision?**
-- Bounding box collision failed with scaled Three.js groups
-- More reliable and tunable
-- Allows for forgiving hit detection (better gameplay)
+---
 
-**Why Three Bullets?**
-- Visual feedback (looks more impressive)
-- Slightly easier to hit moving targets
-- Maintains challenge (not overpowered)
+## Mobile
 
-**Why Three Enemy Types?**
-- Visual variety without overwhelming complexity
-- Different sizes provide natural difficulty variation
-- Each has distinct silhouette for quick recognition
+- **Landscape only** on mobile
+- Touch controls: left/right move buttons + fire button (tap-to-fire, hold supported)
+- `stopTouchFire` exposed globally and called at start of `endGame()` to prevent interval leak
+- Level message box repositioned on landscape (`max-height: 500px`): `top: 58% !important`,
+  smaller fonts to clear HUD at top
+- `isMobile` flag: `'ontouchstart' in window || navigator.maxTouchPoints > 0`
 
-## Future Enhancement Ideas
+---
 
-- Power-ups (rapid fire, shields, spread shot)
-- Boss battles at score milestones
-- Different bullet types or special weapons
-- Progressive difficulty (speed increases over time)
-- Sound effects and background music
-- Particle engine trails on player ship
-- Screen shake on explosions
-- Combo multiplier system
-- Achievement system
+## Timer / Cleanup Rules
 
-## Troubleshooting
+Every timeout/interval/animationFrame must be tracked and cleared in `endGame()`:
 
-**Collision Not Working?**
-- Check Y tolerance and X radius values
-- Verify enemy scaling hasn't changed
-- Ensure backward iteration in collision loops
+```
+gameState.timers.levelTransitionTimeout  — level transition delay
+gameState.timers.bossPortalTimeout       — portal spawn after boss death
+gameState.timers.portalAnimationId       — portal entry animation rAF
+gameState.runtime.animationId            — main game loop rAF
+stopTouchFire()                          — touch fire interval
+```
 
-**Performance Issues?**
-- Check particle count (explosions × 25 particles)
-- Verify enemies/bullets are being removed properly
-- Monitor draw calls in browser DevTools
+`endGame()` clears all of the above at the top of the function.
 
-**Movement Feels Wrong?**
-- Adjust acceleration, maxSpeed, or friction values
-- Check boundary limits (currently ±35)
-- Verify velocityX sign in position update
+---
 
-**Enemies Not Spawning?**
-- Check spawn interval timing
-- Verify difficulty setting is valid
-- Ensure game loop is running
+## Critical Rules (don't get these wrong)
 
-## Contact & Contribution
-
-This is a single-player web game project. All game logic is self-contained in three files for easy modification and learning.
+1. **Never `disposeMesh()` on shared/pooled geometry** — enemy bullets use `SHARED_GEO`; set
+   `mesh.visible = false` to pool them instead.
+2. **Never use `navigator.platform`** — deprecated; use `navigator.userAgent` + `maxTouchPoints`.
+3. **`ensureAudioContext()` is synchronous** — don't await it, don't make sound functions async
+   just to call it.
+4. **All new timers go in `gameState.timers`** and must be cleared in `endGame()`.
+5. **Shield is an integer `shieldStrength` (0–3)**, not a boolean. Check `> 0`, not truthiness.
+6. **`GAME_NARRATIVE.levels` is 0-indexed** — level N data is at index `N - 1`.
+7. **Boss health is capped at 60** (`Math.min(15 + currentLevel * 5, 60)`).
