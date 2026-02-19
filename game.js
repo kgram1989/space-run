@@ -1279,31 +1279,50 @@ async function captureShareImage() {
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
             (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
-        // Clone into a full-screen fixed overlay so html2canvas can reliably
-        // measure the element's position (off-screen coords skew its origin).
-        // The clone mimics the game-over appearance so the brief overlay (~300ms)
-        // is visually seamless. Issues avoided:
+        // Anchor wrapper at the viewport origin — no flex/centering offsets —
+        // so clone.getBoundingClientRect() is always (0,0) and html2canvas has
+        // an unambiguous starting point. Issues avoided:
         //   1. transform:translate(-50%,-50%) — 4-quadrant tiling artifact
         //   2. backdrop-filter — renders black on iOS Safari
+        //   3. flex-centered offset — can shift the canvas origin, cutting left/top edges
         const wrapper = document.createElement('div');
-        wrapper.style.cssText = 'position:fixed;inset:0;z-index:99999;pointer-events:none;display:flex;align-items:center;justify-content:center;';
+        wrapper.style.cssText = 'position:fixed;top:0;left:0;z-index:99999;pointer-events:none;';
 
         const clone = el.cloneNode(true);
+        // getBoundingClientRect().width accounts for any CSS transforms on the
+        // original, giving the true visual width.
+        const cloneWidth = el.getBoundingClientRect().width || el.offsetWidth || 320;
         clone.style.cssText = [
-            'position:relative',
+            'position:absolute',
+            'top:0',
+            'left:0',
             'transform:none',
             'backdrop-filter:none',
             '-webkit-backdrop-filter:none',
             'background:rgb(25,5,5)',
-            `width:${el.offsetWidth}px`
+            `width:${cloneWidth}px`,
+            'box-sizing:border-box',
+            'max-height:none',
+            'overflow:visible',
         ].join(';');
 
-        // h2 CSS class sets -webkit-text-fill-color:transparent via gradient clip,
-        // which html2canvas cannot render. Strip the class and use a plain colour.
+        // The .game-over h2 CSS rule applies via the *parent* class (.game-over h2),
+        // so removing h2.className does not remove -webkit-text-fill-color:transparent.
+        // We must explicitly override it in the inline style.
         const h2 = clone.querySelector('h2');
         if (h2) {
             h2.className = '';
-            h2.style.cssText = 'background:none;color:#ff4400;font-size:3.5em;font-weight:900;letter-spacing:4px;margin-bottom:20px;';
+            h2.style.cssText = [
+                'display:block',
+                'background:none',
+                '-webkit-text-fill-color:#ff4400',
+                'color:#ff4400',
+                'font-size:2em',
+                'font-weight:900',
+                'letter-spacing:4px',
+                'margin-bottom:20px',
+                'text-align:center',
+            ].join(';');
         }
 
         // Remove elements not wanted in screenshot
