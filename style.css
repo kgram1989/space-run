@@ -1002,6 +1002,20 @@ body::before {
         align-items: center;
     }
 
+    .level-message-box {
+        top: 58% !important;
+        padding: 18px 30px;
+    }
+
+    .level-title {
+        font-size: 2em;
+        margin-bottom: 8px;
+    }
+
+    .level-subtitle {
+        font-size: 1em;
+    }
+
     .start-screen,
     .game-over,
     .pause-screen {

@@ -113,6 +113,7 @@ const gameState = {
     timers: {
         portalAnimationId: null,
         levelTransitionTimeout: null,
+        bossPortalTimeout: null,
         enemyEngineParticleCounter: 0,
         lastEnemySpawn: 0,
         engineParticleCounter: 0
@@ -188,6 +189,7 @@ bindStateAlias('lastDropType', gameState.weapon, 'lastDropType');
 bindStateAlias('weaponAmmo', gameState.weapon, 'weaponAmmo');
 bindStateAlias('portalAnimationId', gameState.timers, 'portalAnimationId');
 bindStateAlias('levelTransitionTimeout', gameState.timers, 'levelTransitionTimeout');
+bindStateAlias('bossPortalTimeout', gameState.timers, 'bossPortalTimeout');
 bindStateAlias('enemyEngineParticleCounter', gameState.timers, 'enemyEngineParticleCounter');
 bindStateAlias('lastEnemySpawn', gameState.timers, 'lastEnemySpawn');
 bindStateAlias('engineParticleCounter', gameState.timers, 'engineParticleCounter');
@@ -313,50 +315,129 @@ Intel suggests heavy resistance across multiple star systems. Good luck, pilot.`
     },
 
     levels: [
+        // Act 1 — Departure
         {
             id: 1,
             systemName: "Sol Boundary",
             description: "Departing Earth's solar system. Enemy scouts detected.",
-            theme: {
-                background: { color: 0x000011 },
-                starColor: 0xffffff
-            }
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
         },
         {
             id: 2,
             systemName: "Proxima Drift",
             description: "First jump complete. Navigating asteroid debris field.",
-            theme: {
-                background: { color: 0x110011 },
-                starColor: 0xffffaa
-            }
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
         },
         {
             id: 3,
             systemName: "Crimson Expanse",
             description: "Hostile territory. Red giant star system.",
-            theme: {
-                background: { color: 0x110000 },
-                starColor: 0xffaaaa
-            }
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
         },
         {
             id: 4,
             systemName: "Void Sector",
             description: "Deep space. Long-range sensors compromised.",
-            theme: {
-                background: { color: 0x000000 },
-                starColor: 0xaaaaff
-            }
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
         },
         {
             id: 5,
+            systemName: "Alpha Centauri Rim",
+            description: "Jump beacon locked. Intel: enemy reinforcements inbound.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        // Act 2 — The Revelation
+        {
+            id: 6,
+            systemName: "Barnard's Crossing",
+            description: "Command transmission delayed 4 hours. Proceed on last orders.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 7,
+            systemName: "Wolf Nebula",
+            description: "Intercepted signal: \"The Seed must not reach the Gate.\"",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 8,
+            systemName: "Luyten's Debris",
+            description: "Wreckage detected — hull markings: Earth registry HZ-01.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 9,
+            systemName: "Tau Threshold",
+            description: "Cargo resonance spike. Enemy patterns shifting. Stay sharp.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 10,
+            systemName: "Kepler Station",
+            description: "Command admits: cargo is a resonance device. Nature: classified.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        // Act 3 — The Truth
+        {
+            id: 11,
+            systemName: "Groombridge Rift",
+            description: "Alien faction broadcasts peace signal. Command: ignore it.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 12,
+            systemName: "Serpens Crossing",
+            description: "Decrypted order: destination is not a research base.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 13,
+            systemName: "Veil Nebula",
+            description: "The cargo pulses. Your shield reacts differently. What is this?",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 14,
+            systemName: "Cygnus Dark",
+            description: "Command confirmed: destination is a weapons platform, not a base.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 15,
+            systemName: "NGC Fringe",
+            description: "Final pre-gate transmission: \"Deliver the cargo. No questions.\"",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        // Act 4 — The Gate
+        {
+            id: 16,
+            systemName: "Andromeda Fringe",
+            description: "Alien armada on intercept course. All systems at maximum.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 17,
+            systemName: "Gate Approach Alpha",
+            description: "Command goes dark. You're on your own now.",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 18,
+            systemName: "Gate Approach Beta",
+            description: "Alien leader: \"That weapon will destroy your world. Turn back.\"",
+            theme: { background: { color: 0x000011 }, starColor: 0xffffff }
+        },
+        {
+            id: 19,
+            systemName: "Core Defense Ring",
+            description: "Last line of defense. The gate is visible. No turning back.",
+            theme: { background: { color: 0x110500 }, starColor: 0xff6633 }
+        },
+        {
+            id: 20,
             systemName: "Andromeda Gate",
-            description: "Final approach. Destination ahead.",
-            theme: {
-                background: { color: 0x001122 },
-                starColor: 0xaaffff
-            }
+            description: "Final approach. The mission ends here. Make it count.",
+            theme: { background: { color: 0x1a0000 }, starColor: 0xff2200 }
         }
     ]
 };
@@ -705,6 +786,10 @@ function damageShield() {
     if (player.shieldStrength <= 0) {
         breakShield();
     } else {
+        // Brief invulnerability so simultaneous enemy body + bullet can't drain 2 pips in one frame
+        player.invulnerable = true;
+        player.invulnerableTimer = 18;
+
         playShieldHitSound();
         shakeCamera(0.08);
         updateShieldVisuals();
@@ -845,15 +930,15 @@ function toggleMute() {
     }
 }
 
-async function ensureAudioContext() {
+function ensureAudioContext() {
     if (audioContext.state === 'suspended') {
-        try {
-            await audioContext.resume();
-        } catch (e) {
+        // Fire-and-forget resume — callers are synchronous so no await needed.
+        // applyMuteState is called again in the callback to handle the resumed state.
+        audioContext.resume().then(() => applyMuteState()).catch(e => {
             console.warn('Failed to resume audio context:', e);
-        }
+        });
     }
-    // Always enforce mute state in case browser resumes or reconfigures audio graph.
+    // Apply mute state immediately for the current frame regardless of resume result.
     applyMuteState();
 }
 
@@ -1132,6 +1217,8 @@ document.addEventListener('keyup', (e) => {
 });
 
 restartBtn.addEventListener('click', () => {
+    const titleEl = document.getElementById('gameOverTitle');
+    if (titleEl) titleEl.textContent = 'GAME OVER';
     gameOverScreen.classList.add('hidden');
     startScreen.classList.remove('hidden');
     if (shareStatusElement) {
@@ -1797,7 +1884,7 @@ function createBoss() {
     group.scale.set(2.0, 2.0, 2.0);
 
     // Scale boss health based on difficulty and level
-    const baseHealth = 15 + (currentLevel * 5);
+    const baseHealth = Math.min(15 + (currentLevel * 5), 60);
     const difficultyMultiplier = difficultySettings[difficulty].bossHealthMultiplier;
     const bossHealth = Math.round(baseHealth * difficultyMultiplier);
 
@@ -1923,8 +2010,7 @@ function checkBossCollision() {
             playBossHitSound();
 
             if (!bullet.piercing) {
-                disposeMesh(bullet.mesh);
-                scene.remove(bullet.mesh);
+                scene.remove(bullet.mesh); // shared geo+mat — no dispose
                 bullets.splice(bIndex, 1);
             }
 
@@ -2022,7 +2108,7 @@ function defeatBoss() {
     }
 
     // Boss guaranteed weapon pickup — spawn near the player so it's reachable before portal
-    spawnPickup(player.x, player.y, player.z + 15, true);
+    spawnPickup(player.x + 2.5, player.y, player.z + 15, true);
 
     // Dispose boss lights before removing mesh
     boss.mesh.traverse((child) => {
@@ -2053,12 +2139,18 @@ function defeatBoss() {
     // Boss counts as 3 kills toward extra life drop
     targetsHit += 3;
     if (targetsHit >= 10 && lives < 3) {
-        spawnExtraLifePickup(player.x, player.y, player.z + 15);
+        spawnExtraLifePickup(player.x - 2.5, player.y, player.z + 15);
         targetsHit = 0;
     }
 
-    // Create portal and animate player entering it
-    setTimeout(() => {
+    // Create portal and animate player entering it (or trigger victory on final level)
+    bossPortalTimeout = setTimeout(() => {
+        bossPortalTimeout = null;
+        if (!gameRunning) return;
+        if (currentLevel >= 20) {
+            triggerVictory();
+            return;
+        }
         createPortal();
         animatePortalEntry();
     }, PORTAL_SPAWN_DELAY);
@@ -3103,8 +3195,7 @@ function checkEnemyBulletCollisions() {
         const distance = playerPos.distanceTo(bullet.mesh.position);
 
         if (distance < 2.5) {
-            disposeMesh(bullet.mesh);
-            scene.remove(bullet.mesh);
+            bullet.mesh.visible = false; // return to pool — shared geo, no dispose
             enemyBullets.splice(i, 1);
 
             if (player.shieldStrength > 0) {
@@ -3271,27 +3362,14 @@ function updateWeaponHUD() {
 }
 
 function syncWeaponHudPlacement() {
-    if (!weaponHudEl || !hudLeftEl || !weaponHudDesktopParent) return;
+    if (!weaponHudEl || !hudLeftEl) return;
 
-    const mobileHudLayout = window.matchMedia('(hover: none), (max-width: 1024px) and (max-height: 600px)').matches;
-
-    if (mobileHudLayout) {
-        weaponHudEl.classList.add('weapon-hud-mobile');
-        const levelHudItem = hudLeftEl.querySelector('.hud-level');
-        if (levelHudItem) {
-            levelHudItem.insertAdjacentElement('afterend', weaponHudEl);
-        } else {
-            hudLeftEl.appendChild(weaponHudEl);
-        }
+    weaponHudEl.classList.add('weapon-hud-mobile');
+    const levelHudItem = hudLeftEl.querySelector('.hud-level');
+    if (levelHudItem) {
+        levelHudItem.insertAdjacentElement('afterend', weaponHudEl);
     } else {
-        weaponHudEl.classList.remove('weapon-hud-mobile');
-        if (weaponHudEl.parentNode !== weaponHudDesktopParent) {
-            if (weaponHudDesktopNextSibling && weaponHudDesktopNextSibling.parentNode === weaponHudDesktopParent) {
-                weaponHudDesktopParent.insertBefore(weaponHudEl, weaponHudDesktopNextSibling);
-            } else {
-                weaponHudDesktopParent.appendChild(weaponHudEl);
-            }
-        }
+        hudLeftEl.appendChild(weaponHudEl);
     }
 }
 
@@ -3580,17 +3658,23 @@ function createStars() {
         });
     }
 
-    return { update: animateStars };
+    return { update: animateStars, layers };
 }
 
 const starField = createStars();
 
-// Apply level theme (background color)
+// Apply level theme (background color and star color)
 function loadLevelTheme(levelNumber) {
     const levelData = GAME_NARRATIVE.levels[levelNumber - 1];
     const theme = levelData ? levelData.theme : GAME_NARRATIVE.levels[GAME_NARRATIVE.levels.length - 1].theme;
     scene.background = new THREE.Color(theme.background.color);
     scene.fog.color = new THREE.Color(theme.background.color);
+
+    // Update star field color
+    if (starField && starField.layers) {
+        const c = new THREE.Color(theme.starColor);
+        starField.layers.forEach(layer => layer.mat.color.set(c));
+    }
 }
 
 // Lane indicators removed - better options below
@@ -3773,9 +3857,29 @@ function togglePause() {
     }
 }
 
+// Mission Complete — Victory
+function triggerVictory() {
+    gameRunning = false;
+    cancelAnimationFrame(animationId);
+
+    showMessageBox(
+        'ANDROMEDA GATE',
+        'The Horizon arrives. Cargo delivered. You never learned what you were carrying — and some orders are better left unquestioned. Mission complete, pilot.'
+    );
+
+    setTimeout(() => {
+        const titleEl = document.getElementById('gameOverTitle');
+        if (titleEl) titleEl.textContent = 'MISSION COMPLETE';
+        endGame();
+    }, LEVEL_MESSAGE_TOTAL_TIME * 1.5);
+}
+
 // Game Over
 async function endGame() {
     gameRunning = false;
+
+    // Release touch fire button if held when game ends
+    if (stopTouchFire) stopTouchFire();
 
     // Cancel any ongoing animations and timers
     if (portalAnimationId) {
@@ -3785,6 +3889,10 @@ async function endGame() {
     if (levelTransitionTimeout) {
         clearTimeout(levelTransitionTimeout);
         levelTransitionTimeout = null;
+    }
+    if (bossPortalTimeout) {
+        clearTimeout(bossPortalTimeout);
+        bossPortalTimeout = null;
     }
 
     // Clean up enemy bullets, pickups, and engine particles
@@ -4093,6 +4201,7 @@ updateHighScoreDisplay();
 initializeBriefingScreen();
 
 // Touch Controls Setup (supports both touch and mouse for DevTools compatibility)
+let stopTouchFire = null; // exported so endGame() can clear a held fire button
 (function setupTouchControls() {
     const touchLeft = document.getElementById('touchLeft');
     const touchRight = document.getElementById('touchRight');
@@ -4139,6 +4248,7 @@ initializeBriefingScreen();
         clearInterval(fireInterval);
         fireInterval = null;
     }
+    stopTouchFire = stopFire;
     addInputListeners(touchFire, startFire, stopFire);
 })();
 
