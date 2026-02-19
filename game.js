@@ -3368,7 +3368,7 @@ function collectPickup(pickup) {
         case 'extraLife':
             if (lives < 3) {
                 lives++;
-                updateLives();
+                livesElement.textContent = lives;
                 showWeaponText('\u2665 +1');
             }
             break;
