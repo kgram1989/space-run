@@ -1287,13 +1287,26 @@ async function captureShareImage() {
         if (nameEntryEl) nameEntryEl.style.display = 'none';
         if (shareStatusEl) shareStatusEl.style.display = 'none';
 
+        // iOS Safari: backdrop-filter is not supported by html2canvas and renders black.
+        // Temporarily replace it with a solid opaque background before capture.
+        const prevBackdropFilter = el.style.backdropFilter;
+        const prevWebkitBackdropFilter = el.style.webkitBackdropFilter;
+        const prevBackground = el.style.background;
+        el.style.backdropFilter = 'none';
+        el.style.webkitBackdropFilter = 'none';
+        el.style.background = 'rgb(25, 5, 5)';
+
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+            (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+
         let file = null;
         try {
             const canvas = await html2canvas(el, {
                 backgroundColor: '#190505',
-                scale: 2,
+                scale: isIOS ? 1 : (window.devicePixelRatio || 2),
                 logging: false,
-                useCORS: true
+                useCORS: true,
+                allowTaint: true
             });
             file = await new Promise((resolve) => {
                 canvas.toBlob((blob) => {
@@ -1302,10 +1315,13 @@ async function captureShareImage() {
                 }, 'image/png');
             });
         } finally {
-            // Always restore hidden elements
+            // Always restore
             if (actionsEl) actionsEl.style.display = prevActions;
             if (nameEntryEl) nameEntryEl.style.display = prevNameEntry;
             if (shareStatusEl) shareStatusEl.style.display = prevShareStatus;
+            el.style.backdropFilter = prevBackdropFilter;
+            el.style.webkitBackdropFilter = prevWebkitBackdropFilter;
+            el.style.background = prevBackground;
         }
         return file;
     } catch (e) {
