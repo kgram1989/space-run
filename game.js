@@ -1276,32 +1276,47 @@ async function captureShareImage() {
         const el = document.getElementById('gameOver');
         if (!el) return null;
 
-        // Temporarily hide action buttons and name-entry form so they don't appear in the screenshot
-        const actionsEl = el.querySelector('.game-over-actions');
-        const nameEntryEl = el.querySelector('#nameEntry');
-        const shareStatusEl = el.querySelector('#shareStatus');
-        const prevActions = actionsEl ? actionsEl.style.display : null;
-        const prevNameEntry = nameEntryEl ? nameEntryEl.style.display : null;
-        const prevShareStatus = shareStatusEl ? shareStatusEl.style.display : null;
-        if (actionsEl) actionsEl.style.display = 'none';
-        if (nameEntryEl) nameEntryEl.style.display = 'none';
-        if (shareStatusEl) shareStatusEl.style.display = 'none';
-
-        // iOS Safari: backdrop-filter is not supported by html2canvas and renders black.
-        // Temporarily replace it with a solid opaque background before capture.
-        const prevBackdropFilter = el.style.backdropFilter;
-        const prevWebkitBackdropFilter = el.style.webkitBackdropFilter;
-        const prevBackground = el.style.background;
-        el.style.backdropFilter = 'none';
-        el.style.webkitBackdropFilter = 'none';
-        el.style.background = 'rgb(25, 5, 5)';
-
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
             (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
+        // Clone into a full-screen fixed overlay so html2canvas can reliably
+        // measure the element's position (off-screen coords skew its origin).
+        // The clone mimics the game-over appearance so the brief overlay (~300ms)
+        // is visually seamless. Issues avoided:
+        //   1. transform:translate(-50%,-50%) — 4-quadrant tiling artifact
+        //   2. backdrop-filter — renders black on iOS Safari
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'position:fixed;inset:0;z-index:99999;pointer-events:none;display:flex;align-items:center;justify-content:center;';
+
+        const clone = el.cloneNode(true);
+        clone.style.cssText = [
+            'position:relative',
+            'transform:none',
+            'backdrop-filter:none',
+            '-webkit-backdrop-filter:none',
+            'background:rgb(25,5,5)',
+            `width:${el.offsetWidth}px`
+        ].join(';');
+
+        // h2 CSS class sets -webkit-text-fill-color:transparent via gradient clip,
+        // which html2canvas cannot render. Strip the class and use a plain colour.
+        const h2 = clone.querySelector('h2');
+        if (h2) {
+            h2.className = '';
+            h2.style.cssText = 'background:none;color:#ff4400;font-size:3.5em;font-weight:900;letter-spacing:4px;margin-bottom:20px;';
+        }
+
+        // Remove elements not wanted in screenshot
+        clone.querySelector('.game-over-actions')?.remove();
+        clone.querySelector('#nameEntry')?.remove();
+        clone.querySelector('#shareStatus')?.remove();
+
+        wrapper.appendChild(clone);
+        document.body.appendChild(wrapper);
+
         let file = null;
         try {
-            const canvas = await html2canvas(el, {
+            const canvas = await html2canvas(clone, {
                 backgroundColor: '#190505',
                 scale: isIOS ? 1 : (window.devicePixelRatio || 2),
                 logging: false,
@@ -1315,13 +1330,7 @@ async function captureShareImage() {
                 }, 'image/png');
             });
         } finally {
-            // Always restore
-            if (actionsEl) actionsEl.style.display = prevActions;
-            if (nameEntryEl) nameEntryEl.style.display = prevNameEntry;
-            if (shareStatusEl) shareStatusEl.style.display = prevShareStatus;
-            el.style.backdropFilter = prevBackdropFilter;
-            el.style.webkitBackdropFilter = prevWebkitBackdropFilter;
-            el.style.background = prevBackground;
+            document.body.removeChild(wrapper);
         }
         return file;
     } catch (e) {
