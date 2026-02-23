@@ -526,6 +526,13 @@ const SHARED_GEO = {
     bossParticle: new THREE.SphereGeometry(0.2, 6, 6),
     enemyBullet: (() => { const g = new THREE.SphereGeometry(0.25, 8, 8); g.scale(1, 1, 2); return g; })(),
     enemyBulletGlow: new THREE.SphereGeometry(0.15, 6, 6),
+    // Boss visual enhancement geometries
+    bossAuraParticle: new THREE.SphereGeometry(0.08, 6, 6),
+    bossEnergyVein: new THREE.TorusGeometry(2.2, 0.04, 8, 32),
+    bossSaturnRing: new THREE.TorusGeometry(5.0, 0.08, 8, 48),
+    bossMuzzleFlash: new THREE.SphereGeometry(0.4, 8, 8),
+    bossAfterimage: new THREE.OctahedronGeometry(3, 2),
+    bossExhaustParticle: new THREE.SphereGeometry(0.06, 4, 4),
 };
 
 // Shared materials — created once to avoid per-frame GPU allocations
@@ -1977,6 +1984,73 @@ function createBoss() {
         group.add(armor);
     }
 
+    // === Enhancement 1: Orbiting energy particles (aura) ===
+    const auraParticles = [];
+    const auraCount = isMobile ? 12 : 20;
+    for (let i = 0; i < auraCount; i++) {
+        const auraMat = new THREE.MeshBasicMaterial({
+            color: 0xff4400,
+            transparent: true,
+            opacity: 0.6
+        });
+        const aura = new THREE.Mesh(SHARED_GEO.bossAuraParticle, auraMat);
+        aura.userData.isBossAura = true;
+        aura.userData.orbitAngle = (i / auraCount) * Math.PI * 2;
+        aura.userData.orbitRadius = 3.5 + Math.random() * 1.5;
+        aura.userData.orbitSpeed = 0.015 + Math.random() * 0.01;
+        aura.userData.orbitTilt = (Math.random() - 0.5) * Math.PI * 0.6;
+        aura.userData.phaseOffset = Math.random() * Math.PI * 2;
+        const r = aura.userData.orbitRadius;
+        aura.position.set(Math.cos(aura.userData.orbitAngle) * r, 0, Math.sin(aura.userData.orbitAngle) * r);
+        auraParticles.push(aura);
+        group.add(aura);
+    }
+
+    // === Enhancement 2: Pulsing energy veins (torus rings on core) ===
+    const veinAngles = [
+        { rx: Math.PI / 4, ry: 0, rz: 0 },
+        { rx: 0, ry: 0, rz: Math.PI / 3 },
+        { rx: -Math.PI / 5, ry: Math.PI / 4, rz: 0 }
+    ];
+    for (let i = 0; i < veinAngles.length; i++) {
+        const veinMat = new THREE.MeshBasicMaterial({
+            color: 0xff3300,
+            transparent: true,
+            opacity: 0.3
+        });
+        const vein = new THREE.Mesh(SHARED_GEO.bossEnergyVein, veinMat);
+        vein.rotation.set(veinAngles[i].rx, veinAngles[i].ry, veinAngles[i].rz);
+        vein.userData.isBossVein = true;
+        vein.userData.baseOpacity = 0.3;
+        vein.userData.pulseOffset = i * (Math.PI * 2 / 3);
+        group.add(vein);
+    }
+
+    // === Enhancement 7: Rotating energy rings (Saturn-style) ===
+    const saturnRings = [];
+    const ringConfigs = [
+        { radius: 5.0, tiltX: Math.PI / 2.5, tiltZ: 0.2, speed: 0.012 },
+        { radius: 5.8, tiltX: Math.PI / 3, tiltZ: -0.4, speed: -0.008 },
+        { radius: 4.5, tiltX: Math.PI / 1.8, tiltZ: 0.6, speed: 0.015 }
+    ];
+    for (let i = 0; i < ringConfigs.length; i++) {
+        const rc = ringConfigs[i];
+        const sRingGeo = new THREE.TorusGeometry(rc.radius, 0.06, 8, 48);
+        const sRingMat = new THREE.MeshBasicMaterial({
+            color: 0xcc2200,
+            transparent: true,
+            opacity: i === 2 ? 0 : 0.2  // Third ring hidden until phase 2
+        });
+        const sRing = new THREE.Mesh(sRingGeo, sRingMat);
+        sRing.rotation.x = rc.tiltX;
+        sRing.rotation.z = rc.tiltZ;
+        sRing.userData.isSaturnRing = true;
+        sRing.userData.saturnSpeed = rc.speed;
+        sRing.userData.phaseAppear = i === 2 ? 2 : 1; // Third ring appears at phase 2
+        saturnRings.push(sRing);
+        group.add(sRing);
+    }
+
     group.scale.set(2.0, 2.0, 2.0);
 
     // Scale boss health based on difficulty and level
@@ -2003,25 +2077,43 @@ function createBoss() {
         phaseTransitionTimer: 0,
         baseFireInterval: bossSettings.bossFireInterval,
         baseBurstPauseFrames: bossSettings.bossBurstPauseFrames,
-        baseSpeed: 0.1
+        baseSpeed: 0.1,
+        // Visual enhancement properties
+        afterimages: [],
+        afterimageTimer: 0,
+        exhaustParticles: [],
+        armorDamageApplied: false
     };
 
     // Cache animated children references (avoids per-frame traverse)
-    boss.cached = { shields: [], armor: [], rings: [], pulses: [], emissiveChildren: [] };
+    boss.cached = {
+        shields: [], armor: [], rings: [], pulses: [], emissiveChildren: [],
+        aura: [], veins: [], saturnRings: [], cannons: [], lanceTips: []
+    };
     boss.mesh.traverse((child) => {
         if (child.userData.isBossShield) boss.cached.shields.push(child);
         if (child.userData.isBossArmor) boss.cached.armor.push(child);
         if (child.userData.isRing) boss.cached.rings.push(child);
         if (child.userData.isPulse) boss.cached.pulses.push(child);
+        if (child.userData.isBossAura) boss.cached.aura.push(child);
+        if (child.userData.isBossVein) boss.cached.veins.push(child);
+        if (child.userData.isSaturnRing) boss.cached.saturnRings.push(child);
         if (child.material && child.material.emissive) boss.cached.emissiveChildren.push(child);
     });
 
     boss.mesh.position.set(0, -5, 70);
     boss.mesh.castShadow = !isMobile;
 
-    // Add deep red point light
+    // === Enhancement 3: Dynamic point lights per phase ===
     const light = new THREE.PointLight(0x880000, 4, 25);
     boss.mesh.add(light);
+    const light2 = new THREE.PointLight(0x660000, 2, 18);
+    light2.position.set(3, 0, 0);
+    boss.mesh.add(light2);
+    const light3 = new THREE.PointLight(0x660000, 2, 18);
+    light3.position.set(-3, 0, 0);
+    boss.mesh.add(light3);
+    boss.cached.dynamicLights = [light, light2, light3];
 
     scene.add(boss.mesh);
     bossActive = true;
@@ -2139,6 +2231,32 @@ function updateBoss() {
             );
         }
         playEnemyShootSound();
+
+        // === Enhancement 8: Cannon muzzle flash on fire ===
+        const muzzleCount = Math.min(boss.phase + 1, 4);
+        for (let m = 0; m < muzzleCount; m++) {
+            const mAngle = (m * 2 / 8) * Math.PI * 2; // Use even-indexed cannon positions
+            const muzzleMat = new THREE.MeshBasicMaterial({
+                color: boss.phase === 3 ? 0xffaa00 : boss.phase === 2 ? 0xff6600 : 0xff3300,
+                transparent: true,
+                opacity: 0.9
+            });
+            const muzzleMesh = new THREE.Mesh(SHARED_GEO.bossMuzzleFlash, muzzleMat);
+            // Position at cannon tip in world space
+            muzzleMesh.position.set(
+                bossPos.x + Math.cos(mAngle + boss.mesh.rotation.y) * 7,
+                bossPos.y + Math.sin(mAngle + boss.mesh.rotation.y) * 7,
+                bossPos.z
+            );
+            scene.add(muzzleMesh);
+            particles.push({
+                mesh: muzzleMesh,
+                velocity: new THREE.Vector3(0, 0, 0),
+                life: 5,
+                isFlash: true
+            });
+        }
+
         if (boss.burstShotsRemaining > 1) {
             boss.burstShotsRemaining--;
             boss.fireTimer = boss.fireInterval;
@@ -2187,7 +2305,7 @@ function triggerBossPhaseTransition(newPhase) {
     boss.burstShotsRemaining = boss.burstShotsPerCycle;
     boss.fireTimer = 60; // Brief pause before new attack pattern starts
 
-    // Visual transition: bright flash on boss
+    // Visual transition: bright flash on boss (larger for phase 3)
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: newPhase === 2 ? 0xff8800 : 0xff0000,
         transparent: true,
@@ -2195,31 +2313,81 @@ function triggerBossPhaseTransition(newPhase) {
     });
     const flashMesh = new THREE.Mesh(SHARED_GEO.bossFlash, flashMaterial);
     flashMesh.position.copy(boss.mesh.position);
+    if (newPhase === 3) flashMesh.scale.set(1.5, 1.5, 1.5);
     scene.add(flashMesh);
     particles.push({
         mesh: flashMesh,
         velocity: new THREE.Vector3(0, 0, 0),
-        life: 15,
+        life: newPhase === 3 ? 20 : 15,
         isFlash: true
     });
 
-    // Shockwave ring for phase transition
-    const ringMaterial = new THREE.MeshBasicMaterial({
-        color: newPhase === 2 ? 0xff6600 : 0xff2200,
-        transparent: true,
-        opacity: 0.7
-    });
-    const ringMesh = new THREE.Mesh(SHARED_GEO.bossRing, ringMaterial);
-    ringMesh.position.copy(boss.mesh.position);
-    ringMesh.rotation.x = Math.PI / 2;
-    scene.add(ringMesh);
-    particles.push({
-        mesh: ringMesh,
-        velocity: new THREE.Vector3(0, 0, 0),
-        life: 20,
-        isShockwave: true,
-        expandRate: 0.25
-    });
+    // === Enhancement 9: Improved phase transition shockwave ===
+    // Multiple concentric shockwave rings at staggered timing
+    const ringCount = newPhase === 3 ? 4 : 3;
+    const ringColors = newPhase === 2
+        ? [0xff6600, 0xff8800, 0xffaa00]
+        : [0xff2200, 0xff4400, 0xff6600, 0xffaa00];
+    for (let r = 0; r < ringCount; r++) {
+        const ringMaterial = new THREE.MeshBasicMaterial({
+            color: ringColors[r],
+            transparent: true,
+            opacity: 0.7 - r * 0.1
+        });
+        const ringMesh = new THREE.Mesh(SHARED_GEO.bossRing, ringMaterial);
+        ringMesh.position.copy(boss.mesh.position);
+        ringMesh.rotation.x = Math.PI / 2;
+        // Stagger initial scale so rings expand at different radii
+        const initialScale = 1 + r * 0.3;
+        ringMesh.scale.set(initialScale, initialScale, initialScale);
+        scene.add(ringMesh);
+        particles.push({
+            mesh: ringMesh,
+            velocity: new THREE.Vector3(0, 0, 0),
+            life: 20 + r * 5,
+            isShockwave: true,
+            expandRate: 0.2 + r * 0.05
+        });
+    }
+
+    // FOV pulse effect — brief widening then snap back
+    const originalFov = camera.fov;
+    const fovBump = newPhase === 3 ? 8 : 5;
+    camera.fov = originalFov + fovBump;
+    camera.updateProjectionMatrix();
+    // Smooth return over ~300ms
+    const fovSteps = 10;
+    let fovStep = 0;
+    const fovInterval = setInterval(() => {
+        fovStep++;
+        camera.fov = originalFov + fovBump * (1 - fovStep / fovSteps);
+        camera.updateProjectionMatrix();
+        if (fovStep >= fovSteps) clearInterval(fovInterval);
+    }, 30);
+
+    // Burst of energy particles radiating outward
+    const burstCount = newPhase === 3 ? 30 : 20;
+    for (let i = 0; i < burstCount; i++) {
+        const angle = (i / burstCount) * Math.PI * 2;
+        const bMat = new THREE.MeshBasicMaterial({
+            color: newPhase === 2 ? 0xff8800 : 0xff3300,
+            transparent: true,
+            opacity: 0.8
+        });
+        const bMesh = new THREE.Mesh(SHARED_GEO.bossParticle, bMat);
+        bMesh.position.copy(boss.mesh.position);
+        scene.add(bMesh);
+        const speed = 0.4 + Math.random() * 0.3;
+        particles.push({
+            mesh: bMesh,
+            velocity: new THREE.Vector3(
+                Math.cos(angle) * speed,
+                (Math.random() - 0.5) * speed * 0.3,
+                Math.sin(angle) * speed
+            ),
+            life: 25
+        });
+    }
 
     // Update health bar phase indicator
     updateBossPhaseLabel();
@@ -2282,6 +2450,40 @@ function checkBossCollision() {
                 setTimeout(() => { if (mat) mat.emissiveIntensity = originalIntensity; }, 100);
             }
 
+            // === Enhancement 6: Shield hex-grid hit reaction ===
+            const shields = boss.cached.shields;
+            for (let si = 0; si < shields.length; si++) {
+                const shieldMat = shields[si].material;
+                const origColor = shieldMat.color.getHex();
+                const origOpacity = shieldMat.opacity;
+                shieldMat.color.setHex(0xffffff);
+                shieldMat.opacity = 0.5;
+                setTimeout(() => {
+                    if (shieldMat) {
+                        shieldMat.color.setHex(origColor);
+                        shieldMat.opacity = origOpacity;
+                    }
+                }, 80);
+            }
+
+            // Spawn localized shield impact flash at bullet hit position
+            if (!isMobile) {
+                const impactMat = new THREE.MeshBasicMaterial({
+                    color: 0xffffff,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const impactMesh = new THREE.Mesh(SHARED_GEO.bossMuzzleFlash, impactMat);
+                impactMesh.position.copy(bulletPos);
+                scene.add(impactMesh);
+                particles.push({
+                    mesh: impactMesh,
+                    velocity: new THREE.Vector3(0, 0, 0),
+                    life: 6,
+                    isFlash: true
+                });
+            }
+
             if (boss.health <= 0) {
                 defeatBoss();
                 break;  // Exit loop - boss is defeated, no need to check more bullets
@@ -2308,6 +2510,22 @@ function checkBossCollision() {
 function defeatBoss() {
     if (!boss) return;
 
+    // Clean up boss visual enhancement particles
+    if (boss.afterimages) {
+        for (let i = boss.afterimages.length - 1; i >= 0; i--) {
+            boss.afterimages[i].mesh.material.dispose();
+            scene.remove(boss.afterimages[i].mesh);
+        }
+        boss.afterimages = [];
+    }
+    if (boss.exhaustParticles) {
+        for (let i = boss.exhaustParticles.length - 1; i >= 0; i--) {
+            boss.exhaustParticles[i].mesh.material.dispose();
+            scene.remove(boss.exhaustParticles[i].mesh);
+        }
+        boss.exhaustParticles = [];
+    }
+
     playExplosionSound();
     playLevelCompleteSound();
     shakeCamera(0.6);  // Bigger shake for boss explosion
@@ -2328,33 +2546,39 @@ function defeatBoss() {
         isFlash: true
     });
 
-    // Shockwave ring - bigger for boss
-    const ringMaterial = new THREE.MeshBasicMaterial({
-        color: 0xff3300,
-        transparent: true,
-        opacity: 0.8
-    });
-    const ringMesh = new THREE.Mesh(SHARED_GEO.bossRing, ringMaterial);
-    ringMesh.position.copy(boss.mesh.position);
-    ringMesh.rotation.x = Math.PI / 2;
-    scene.add(ringMesh);
-    particles.push({
-        mesh: ringMesh,
-        velocity: new THREE.Vector3(0, 0, 0),
-        life: 15,
-        isShockwave: true,
-        expandRate: 0.3
-    });
-
-    // Boss explosion - more particles, bigger, but contained
-    for (let i = 0; i < 50; i++) {
-        const material = new THREE.MeshBasicMaterial({
-            color: Math.random() > 0.3 ? 0xff0000 : 0xffff00
+    // Multiple concentric shockwave rings for death explosion
+    const deathRingColors = [0xff3300, 0xff6600, 0xffaa00];
+    for (let r = 0; r < 3; r++) {
+        const ringMaterial = new THREE.MeshBasicMaterial({
+            color: deathRingColors[r],
+            transparent: true,
+            opacity: 0.8 - r * 0.15
         });
+        const ringMesh = new THREE.Mesh(SHARED_GEO.bossRing, ringMaterial);
+        ringMesh.position.copy(boss.mesh.position);
+        ringMesh.rotation.x = Math.PI / 2;
+        const initScale = 1 + r * 0.5;
+        ringMesh.scale.set(initScale, initScale, initScale);
+        scene.add(ringMesh);
+        particles.push({
+            mesh: ringMesh,
+            velocity: new THREE.Vector3(0, 0, 0),
+            life: 18 + r * 4,
+            isShockwave: true,
+            expandRate: 0.3 + r * 0.05
+        });
+    }
+
+    // Boss explosion - more particles with color variety
+    const deathParticleCount = isMobile ? 40 : 70;
+    for (let i = 0; i < deathParticleCount; i++) {
+        const colorRoll = Math.random();
+        const color = colorRoll > 0.6 ? 0xff0000 : colorRoll > 0.3 ? 0xff6600 : 0xffff00;
+        const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1.0 });
         const particleMesh = new THREE.Mesh(SHARED_GEO.bossParticle, material);
         particleMesh.position.copy(boss.mesh.position);
 
-        const speed = 0.3 + Math.random() * 0.5;
+        const speed = 0.3 + Math.random() * 0.6;
         const particle = {
             mesh: particleMesh,
             velocity: new THREE.Vector3(
@@ -2362,12 +2586,24 @@ function defeatBoss() {
                 (Math.random() - 0.5) * speed,
                 (Math.random() - 0.5) * speed
             ),
-            life: 35
+            life: 30 + Math.floor(Math.random() * 20)
         };
 
         scene.add(particleMesh);
         particles.push(particle);
     }
+
+    // FOV snap for defeat
+    const origFov = camera.fov;
+    camera.fov = origFov + 10;
+    camera.updateProjectionMatrix();
+    let fovS = 0;
+    const fovI = setInterval(() => {
+        fovS++;
+        camera.fov = origFov + 10 * (1 - fovS / 12);
+        camera.updateProjectionMatrix();
+        if (fovS >= 12) clearInterval(fovI);
+    }, 25);
 
     // Boss guaranteed weapon pickup — spawn near the player so it's reachable before portal
     spawnPickup(player.x + 2.5, player.y, player.z + 15, true);
@@ -3223,6 +3459,180 @@ function animateBossParts() {
             if (mat.emissive) {
                 const intensity = phase === 3 ? 1.2 + Math.sin(now * 0.008) * 0.4 : 0.9;
                 mat.emissiveIntensity = intensity;
+            }
+        }
+    }
+
+    // === Enhancement 1: Orbiting energy particles (aura) ===
+    const auraSpeedMult = phase === 3 ? 2.5 : phase === 2 ? 1.7 : 1;
+    for (let i = 0; i < c.aura.length; i++) {
+        const a = c.aura[i];
+        a.userData.orbitAngle += a.userData.orbitSpeed * auraSpeedMult;
+        const r = a.userData.orbitRadius;
+        const tilt = a.userData.orbitTilt;
+        const angle = a.userData.orbitAngle;
+        a.position.x = Math.cos(angle) * r;
+        a.position.y = Math.sin(angle) * Math.sin(tilt) * r * 0.5;
+        a.position.z = Math.sin(angle) * r;
+        // Pulsing opacity
+        const opacityPulse = Math.sin(now * 0.008 + a.userData.phaseOffset) * 0.3 + 0.5;
+        a.material.opacity = opacityPulse * (phase === 3 ? 1.0 : phase === 2 ? 0.8 : 0.6);
+        // Phase color shift
+        if (phase === 3) a.material.color.setHex(0xffaa00);
+        else if (phase === 2) a.material.color.setHex(0xff6600);
+        else a.material.color.setHex(0xff4400);
+        // Scale pulse
+        const s = 0.8 + Math.sin(now * 0.01 + a.userData.phaseOffset) * 0.4;
+        a.scale.set(s, s, s);
+    }
+
+    // === Enhancement 2: Pulsing energy veins ===
+    for (let i = 0; i < c.veins.length; i++) {
+        const v = c.veins[i];
+        const veinPulse = Math.sin(now * 0.005 * pulseFreqMult + v.userData.pulseOffset);
+        const baseOp = phase === 3 ? 0.6 : phase === 2 ? 0.45 : 0.3;
+        v.material.opacity = baseOp + veinPulse * 0.2;
+        if (phase === 3) v.material.color.setHex(0xff6600);
+        else if (phase === 2) v.material.color.setHex(0xff4400);
+        else v.material.color.setHex(0xff3300);
+        // Slow rotation to make veins look alive
+        v.rotation.z += 0.002 * ringSpeedMult;
+    }
+
+    // === Enhancement 3: Dynamic point lights per phase ===
+    if (boss.cached.dynamicLights) {
+        const lights = boss.cached.dynamicLights;
+        const lightPulse = Math.sin(now * 0.004) * 0.3 + 0.7;
+        if (phase === 3) {
+            lights[0].color.setHex(0xff4400);
+            lights[0].intensity = 6 * lightPulse;
+            lights[0].distance = 35;
+            lights[1].color.setHex(0xff6600);
+            lights[1].intensity = 4 * lightPulse;
+            lights[2].color.setHex(0xff6600);
+            lights[2].intensity = 4 * lightPulse;
+        } else if (phase === 2) {
+            lights[0].color.setHex(0xcc4400);
+            lights[0].intensity = 5 * lightPulse;
+            lights[0].distance = 30;
+            lights[1].color.setHex(0xcc5500);
+            lights[1].intensity = 3 * lightPulse;
+            lights[2].color.setHex(0xcc5500);
+            lights[2].intensity = 3 * lightPulse;
+        } else {
+            lights[0].intensity = 4 * lightPulse;
+            lights[1].intensity = 2 * lightPulse;
+            lights[2].intensity = 2 * lightPulse;
+        }
+    }
+
+    // === Enhancement 7: Rotating Saturn-style energy rings ===
+    for (let i = 0; i < c.saturnRings.length; i++) {
+        const sr = c.saturnRings[i];
+        sr.rotation.y += sr.userData.saturnSpeed * ringSpeedMult;
+        // Show/hide based on phase
+        if (sr.userData.phaseAppear <= phase) {
+            const targetOpacity = phase === 3 ? 0.45 : phase === 2 ? 0.3 : 0.2;
+            sr.material.opacity += (targetOpacity - sr.material.opacity) * 0.05;
+        }
+        // Phase color
+        if (phase === 3) sr.material.color.setHex(0xff4400);
+        else if (phase === 2) sr.material.color.setHex(0xdd3300);
+    }
+
+    // === Enhancement 4: Trailing afterimage / motion blur ===
+    boss.afterimageTimer++;
+    const afterimageInterval = phase === 3 ? 2 : phase === 2 ? 4 : 6;
+    if (boss.afterimageTimer >= afterimageInterval && !isMobile) {
+        boss.afterimageTimer = 0;
+        const afterMat = new THREE.MeshBasicMaterial({
+            color: phase === 3 ? 0xff2200 : phase === 2 ? 0xcc4400 : 0x880000,
+            transparent: true,
+            opacity: phase === 3 ? 0.25 : 0.15,
+            wireframe: true
+        });
+        const afterMesh = new THREE.Mesh(SHARED_GEO.bossAfterimage, afterMat);
+        afterMesh.position.copy(boss.mesh.position);
+        afterMesh.rotation.copy(boss.mesh.rotation);
+        afterMesh.scale.copy(boss.mesh.scale);
+        scene.add(afterMesh);
+        boss.afterimages.push({ mesh: afterMesh, life: phase === 3 ? 12 : 8 });
+    }
+    // Update existing afterimages
+    for (let i = boss.afterimages.length - 1; i >= 0; i--) {
+        const ai = boss.afterimages[i];
+        ai.life--;
+        ai.mesh.material.opacity *= 0.85;
+        ai.mesh.scale.multiplyScalar(1.01);
+        if (ai.life <= 0) {
+            ai.mesh.material.dispose();
+            scene.remove(ai.mesh);
+            boss.afterimages.splice(i, 1);
+        }
+    }
+
+    // === Enhancement 5: Persistent particle engine exhaust ===
+    if (!isMobile || boss.exhaustParticles.length < 8) {
+        const exhaustCount = phase === 3 ? 3 : phase === 2 ? 2 : 1;
+        for (let e = 0; e < exhaustCount; e++) {
+            const exMat = new THREE.MeshBasicMaterial({
+                color: phase === 3 ? 0xffcc00 : phase === 2 ? 0xff8800 : 0xff3300,
+                transparent: true,
+                opacity: 0.7
+            });
+            const exMesh = new THREE.Mesh(SHARED_GEO.bossExhaustParticle, exMat);
+            exMesh.position.set(
+                boss.mesh.position.x + (Math.random() - 0.5) * 6,
+                boss.mesh.position.y + (Math.random() - 0.5) * 2,
+                boss.mesh.position.z + 2 + Math.random() * 2
+            );
+            scene.add(exMesh);
+            boss.exhaustParticles.push({
+                mesh: exMesh,
+                velocity: new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.05,
+                    -0.02 - Math.random() * 0.03,
+                    0.1 + Math.random() * 0.15
+                ),
+                life: 20 + Math.floor(Math.random() * 15)
+            });
+        }
+    }
+    // Update exhaust particles
+    for (let i = boss.exhaustParticles.length - 1; i >= 0; i--) {
+        const ep = boss.exhaustParticles[i];
+        ep.mesh.position.add(ep.velocity);
+        ep.life--;
+        ep.mesh.material.opacity = (ep.life / 35) * 0.7;
+        ep.mesh.scale.multiplyScalar(0.96);
+        if (ep.life <= 0) {
+            ep.mesh.material.dispose();
+            scene.remove(ep.mesh);
+            boss.exhaustParticles.splice(i, 1);
+        }
+    }
+
+    // === Enhancement 10: Damage scarring on armor ===
+    const healthRatio = boss.health / boss.maxHealth;
+    if (healthRatio < 0.8) {
+        for (let i = 0; i < c.armor.length; i++) {
+            const a = c.armor[i];
+            if (a.material.emissive) {
+                // Progressively darken and displace armor
+                const damageLevel = 1 - healthRatio; // 0 to 1
+                const displacement = 2.8 + damageLevel * 1.2; // push outward
+                a.position.x = Math.cos(a.userData.orbitAngle) * displacement;
+                a.position.z = Math.sin(a.userData.orbitAngle) * displacement;
+                // Darken color as damage increases
+                if (phase === 1) {
+                    const darkR = Math.max(0x10, 0x22 - Math.floor(damageLevel * 0x20));
+                    a.material.color.setRGB(darkR / 255, 0, 0);
+                    a.material.emissiveIntensity = Math.max(0.05, 0.25 - damageLevel * 0.3);
+                }
+                // Add jitter in later phases to simulate structural failure
+                if (phase >= 2) {
+                    a.position.y = Math.sin(now * 0.02 + i) * damageLevel * 0.3;
+                }
             }
         }
     }
@@ -4214,6 +4624,18 @@ async function endGame() {
         if (p.poolItem) p.poolItem.inUse = false;
     });
     enemyEngineParticles = [];
+
+    // Clean up boss visual enhancement particles if boss still exists
+    if (boss) {
+        if (boss.afterimages) {
+            boss.afterimages.forEach(ai => { ai.mesh.material.dispose(); scene.remove(ai.mesh); });
+            boss.afterimages = [];
+        }
+        if (boss.exhaustParticles) {
+            boss.exhaustParticles.forEach(ep => { ep.mesh.material.dispose(); scene.remove(ep.mesh); });
+            boss.exhaustParticles = [];
+        }
+    }
 
     if (touchControlsEl) touchControlsEl.style.pointerEvents = 'none';
     playGameOverSound();  // Play game over sound
