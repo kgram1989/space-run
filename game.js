@@ -1754,7 +1754,7 @@ function shootDefault(weapon) {
 }
 
 function shootSpread(weapon) {
-    const angles = [-0.15, -0.07, 0, 0.07, 0.15];
+    const angles = [-0.10, -0.05, 0, 0.05, 0.10];
     angles.forEach(angle => {
         const mesh = createBulletMesh(weapon, 0.18);
         mesh.position.set(player.x, player.y, player.z + 4);
