@@ -221,7 +221,12 @@ const baseCameraPosition = { x: 0, y: 12, z: -18 };
 const baseCameraLookAt = { x: 0, y: -3, z: 25 };
 
 // Constants for timing and spacing
-const PORTAL_SPAWN_DELAY = 1500; // ms after boss defeat
+const PORTAL_SPAWN_DELAY = 1500;
+
+// Boss phase thresholds (percentage of max health where each phase triggers)
+// Phase 1: 100%-60%, Phase 2: 60%-30%, Phase 3: 30%-0%
+const BOSS_PHASE_THRESHOLDS = [0.6, 0.3]; // health ratios that trigger phase 2 and phase 3
+const BOSS_PHASE_TRANSITION_FRAMES = 90;   // ~1.5 seconds of invulnerability during transition // ms after boss defeat
 const LEVEL_MESSAGE_DURATION = 2500; // ms
 const LEVEL_MESSAGE_FADE_TIME = 500; // ms
 const LEVEL_MESSAGE_TOTAL_TIME = 3000; // LEVEL_MESSAGE_DURATION + LEVEL_MESSAGE_FADE_TIME
@@ -1047,6 +1052,40 @@ function playBossHitSound() {
 
     oscillator.start(audioContext.currentTime);
     oscillator.stop(audioContext.currentTime + 0.2);
+}
+
+function playBossPhaseSound() {
+    if (isMuted) return;
+    ensureAudioContext();
+    // Deep rumble + rising tone to signal phase change
+    const osc1 = audioContext.createOscillator();
+    const osc2 = audioContext.createOscillator();
+    const gain1 = audioContext.createGain();
+    const gain2 = audioContext.createGain();
+
+    osc1.connect(gain1);
+    gain1.connect(masterGain);
+    osc2.connect(gain2);
+    gain2.connect(masterGain);
+
+    // Deep rumble
+    osc1.frequency.setValueAtTime(60, audioContext.currentTime);
+    osc1.frequency.exponentialRampToValueAtTime(40, audioContext.currentTime + 0.6);
+    osc1.type = 'sawtooth';
+    gain1.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gain1.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.6);
+
+    // Rising alarm tone
+    osc2.frequency.setValueAtTime(200, audioContext.currentTime);
+    osc2.frequency.exponentialRampToValueAtTime(600, audioContext.currentTime + 0.4);
+    osc2.type = 'square';
+    gain2.gain.setValueAtTime(0.15, audioContext.currentTime);
+    gain2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+
+    osc1.start(audioContext.currentTime);
+    osc1.stop(audioContext.currentTime + 0.6);
+    osc2.start(audioContext.currentTime);
+    osc2.stop(audioContext.currentTime + 0.4);
 }
 
 function playLevelCompleteSound() {
@@ -1949,7 +1988,14 @@ function createBoss() {
         burstShotsPerCycle: bossSettings.bossBurstShots,
         burstShotsRemaining: bossSettings.bossBurstShots,
         burstPauseFrames: bossSettings.bossBurstPauseFrames,
-        bulletSpeedMultiplier: bossSettings.bossBulletSpeedMultiplier
+        bulletSpeedMultiplier: bossSettings.bossBulletSpeedMultiplier,
+        // Multi-phase properties
+        phase: 1,
+        phaseTransitioning: false,
+        phaseTransitionTimer: 0,
+        baseFireInterval: bossSettings.bossFireInterval,
+        baseBurstPauseFrames: bossSettings.bossBurstPauseFrames,
+        baseSpeed: 0.1
     };
 
     // Cache animated children references (avoids per-frame traverse)
@@ -1987,6 +2033,32 @@ function updateBossHealthBar() {
 function updateBoss() {
     if (!boss) return;
 
+    // Handle phase transition invulnerability countdown
+    if (boss.phaseTransitioning) {
+        boss.phaseTransitionTimer--;
+        // Pulsing glow effect during transition
+        const pulseAlpha = Math.sin(boss.phaseTransitionTimer * 0.3) * 0.5 + 0.5;
+        const c = boss.cached;
+        for (let i = 0; i < c.shields.length; i++) {
+            c.shields[i].material.opacity = 0.2 + pulseAlpha * 0.4;
+        }
+        if (boss.phaseTransitionTimer <= 0) {
+            boss.phaseTransitioning = false;
+            // Restore shield opacity to normal animated range
+            for (let i = 0; i < c.shields.length; i++) {
+                c.shields[i].material.opacity = 0.12;
+            }
+        }
+        // Still move and animate during transition, but don't shoot
+        boss.mesh.position.x += boss.speed * boss.direction * 0.3;
+        if (boss.mesh.position.x > 25 || boss.mesh.position.x < -25) {
+            boss.direction *= -1;
+        }
+        boss.mesh.rotation.y += 0.02;
+        animateBossParts();
+        return;
+    }
+
     // Move boss side to side
     boss.mesh.position.x += boss.speed * boss.direction;
 
@@ -1998,9 +2070,10 @@ function updateBoss() {
     // Slowly advance forward
     boss.mesh.position.z -= 0.04;
 
-    // Rotation for intimidation
-    boss.mesh.rotation.y += 0.01;
-    boss.mesh.rotation.z = Math.sin(Date.now() * 0.001) * 0.1;
+    // Rotation for intimidation (faster in later phases)
+    const rotSpeed = 0.01 * boss.phase;
+    boss.mesh.rotation.y += rotSpeed;
+    boss.mesh.rotation.z = Math.sin(Date.now() * 0.001) * (0.1 * boss.phase);
 
     animateBossParts();
 
@@ -2010,7 +2083,19 @@ function updateBoss() {
         const bossPos = boss.mesh.position;
         const multiShotSpeed = (0.5 + (currentLevel - 1) * 0.03) * boss.bulletSpeedMultiplier;
         const singleShotSpeed = 0.45 * boss.bulletSpeedMultiplier;
-        if (difficultySettings[difficulty].bossMultiShot) {
+
+        if (boss.phase === 3) {
+            // Phase 3: ring shot pattern — 5 bullets in a spread aimed at player region
+            const spreadAngle = 0.4;
+            for (let s = -2; s <= 2; s++) {
+                createEnemyBullet(
+                    bossPos.x, bossPos.y, bossPos.z,
+                    player.x + s * 5, player.y, player.z,
+                    multiShotSpeed * 1.1
+                );
+            }
+        } else if (boss.phase === 2 || difficultySettings[difficulty].bossMultiShot) {
+            // Phase 2 or medium/hard: 3-bullet spread
             for (let s = -1; s <= 1; s++) {
                 createEnemyBullet(
                     bossPos.x, bossPos.y, bossPos.z,
@@ -2019,6 +2104,7 @@ function updateBoss() {
                 );
             }
         } else {
+            // Phase 1 easy: single aimed shot
             createEnemyBullet(
                 bossPos.x, bossPos.y, bossPos.z,
                 player.x, player.y, player.z,
@@ -2043,8 +2129,102 @@ function updateBoss() {
     }
 }
 
+function triggerBossPhaseTransition(newPhase) {
+    if (!boss || boss.phaseTransitioning) return;
+
+    boss.phase = newPhase;
+    boss.phaseTransitioning = true;
+    boss.phaseTransitionTimer = BOSS_PHASE_TRANSITION_FRAMES;
+
+    playBossPhaseSound();
+    shakeCamera(0.4);
+
+    // Clear enemy bullets during transition to give player a breather
+    enemyBullets.forEach(b => { b.mesh.visible = false; });
+    enemyBullets = [];
+
+    // Phase-specific stat changes
+    if (newPhase === 2) {
+        boss.speed = boss.baseSpeed * 1.5;
+        boss.fireInterval = Math.round(boss.baseFireInterval * 0.8);
+        boss.burstShotsPerCycle = 3;
+        boss.burstPauseFrames = Math.round(boss.baseBurstPauseFrames * 0.8);
+    } else if (newPhase === 3) {
+        boss.speed = boss.baseSpeed * 2.0;
+        boss.fireInterval = Math.round(boss.baseFireInterval * 0.6);
+        boss.burstShotsPerCycle = 4;
+        boss.burstPauseFrames = Math.round(boss.baseBurstPauseFrames * 0.6);
+    }
+
+    // Reset burst cycle for new phase
+    boss.burstShotsRemaining = boss.burstShotsPerCycle;
+    boss.fireTimer = 60; // Brief pause before new attack pattern starts
+
+    // Visual transition: bright flash on boss
+    const flashMaterial = new THREE.MeshBasicMaterial({
+        color: newPhase === 2 ? 0xff8800 : 0xff0000,
+        transparent: true,
+        opacity: 0.9
+    });
+    const flashMesh = new THREE.Mesh(SHARED_GEO.bossFlash, flashMaterial);
+    flashMesh.position.copy(boss.mesh.position);
+    scene.add(flashMesh);
+    particles.push({
+        mesh: flashMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 15,
+        isFlash: true
+    });
+
+    // Shockwave ring for phase transition
+    const ringMaterial = new THREE.MeshBasicMaterial({
+        color: newPhase === 2 ? 0xff6600 : 0xff2200,
+        transparent: true,
+        opacity: 0.7
+    });
+    const ringMesh = new THREE.Mesh(SHARED_GEO.bossRing, ringMaterial);
+    ringMesh.position.copy(boss.mesh.position);
+    ringMesh.rotation.x = Math.PI / 2;
+    scene.add(ringMesh);
+    particles.push({
+        mesh: ringMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 20,
+        isShockwave: true,
+        expandRate: 0.25
+    });
+
+    // Update health bar phase indicator
+    updateBossPhaseLabel();
+    updateBossHealthBarColor();
+}
+
+function checkBossPhaseTransition() {
+    if (!boss || boss.phaseTransitioning) return;
+
+    const healthRatio = boss.health / boss.maxHealth;
+
+    if (boss.phase === 1 && healthRatio <= BOSS_PHASE_THRESHOLDS[0]) {
+        triggerBossPhaseTransition(2);
+    } else if (boss.phase === 2 && healthRatio <= BOSS_PHASE_THRESHOLDS[1]) {
+        triggerBossPhaseTransition(3);
+    }
+}
+
 function checkBossCollision() {
     if (!boss) return;
+
+    // During phase transition, boss is invulnerable but still collides with player
+    if (boss.phaseTransitioning) {
+        const playerPos = player.mesh.position;
+        const bossPos = boss.mesh.position;
+        const distance = playerPos.distanceTo(bossPos);
+        if (distance < 6 && !player.invulnerable) {
+            lives = 0;
+            updateLives();
+        }
+        return;
+    }
 
     const bossPos = boss.mesh.position;
 
@@ -2079,8 +2259,14 @@ function checkBossCollision() {
                 defeatBoss();
                 break;  // Exit loop - boss is defeated, no need to check more bullets
             }
+
+            // Check for phase transition after taking damage
+            checkBossPhaseTransition();
+            if (boss && boss.phaseTransitioning) break; // Stop processing hits during transition
         }
     }
+
+    if (!boss) return; // Boss may have been defeated
 
     // Check boss-player collision
     const playerPos = player.mesh.position;
