@@ -193,7 +193,34 @@ body {
     letter-spacing: 3px;
 }
 
+.boss-phase-label {
+    font-size: 0.75em;
+    font-weight: 700;
+    color: #cc4444;
+    letter-spacing: 2px;
+    margin-bottom: 5px;
+    text-shadow: 0 0 8px rgba(139, 0, 0, 0.5);
+    transition: color 0.3s ease;
+}
+
+.boss-phase-label.phase-2 {
+    color: #ff8800;
+    text-shadow: 0 0 10px rgba(255, 136, 0, 0.6);
+}
+
+.boss-phase-label.phase-3 {
+    color: #ff2200;
+    text-shadow: 0 0 12px rgba(255, 34, 0, 0.7);
+    animation: phaseWarning 0.6s ease-in-out infinite;
+}
+
+@keyframes phaseWarning {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
 .health-bar-container {
+    position: relative;
     width: 300px;
     height: 20px;
     background: rgba(0, 0, 0, 0.6);
@@ -208,8 +235,31 @@ body {
     background: linear-gradient(90deg, #8b0000, #cc3300, #8b0000);
     background-size: 200% 100%;
     animation: healthPulse 2s ease-in-out infinite;
-    transition: width 0.3s ease;
+    transition: width 0.3s ease, background 0.5s ease;
     box-shadow: 0 0 15px rgba(139, 0, 0, 0.6);
+}
+
+.health-bar-fill.phase-2 {
+    background: linear-gradient(90deg, #cc6600, #ff8800, #cc6600);
+    background-size: 200% 100%;
+    box-shadow: 0 0 15px rgba(255, 136, 0, 0.6);
+}
+
+.health-bar-fill.phase-3 {
+    background: linear-gradient(90deg, #cc0000, #ff2200, #ff4400, #ff2200, #cc0000);
+    background-size: 200% 100%;
+    animation: healthPulse 0.8s ease-in-out infinite;
+    box-shadow: 0 0 20px rgba(255, 34, 0, 0.8);
+}
+
+.phase-marker {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.3);
+    pointer-events: none;
+    z-index: 1;
 }
 
 @keyframes healthPulse {
@@ -300,7 +350,7 @@ body {
     transform: translate(-50%, -50%);
     backdrop-filter: blur(20px) saturate(180%);
     background: rgba(25, 5, 5, 0.85);
-    padding: 50px 70px;
+    padding: 40px 60px;
     border-radius: 25px;
     border: 2px solid rgba(255, 0, 0, 0.4);
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5),
@@ -309,24 +359,26 @@ body {
     z-index: 10;
     animation: modalFadeIn 0.4s ease-out;
     text-align: center;
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 .game-over h2 {
-    font-size: 4em;
+    font-size: 3em;
     background: linear-gradient(45deg, #ff0000, #ff6600);
     background-size: 200% 200%;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 20px;
+    margin-bottom: 15px;
     font-weight: 900;
     letter-spacing: 4px;
     animation: gradientShift 2s ease infinite;
 }
 
 .game-over p {
-    font-size: 1.6em;
-    margin-bottom: 25px;
+    font-size: 1.4em;
+    margin-bottom: 20px;
     color: #ffff00;
     text-shadow: 0 0 10px rgba(255, 255, 0, 0.6);
 }
@@ -435,7 +487,7 @@ body {
     transform: translate(-50%, -50%);
     backdrop-filter: blur(20px) saturate(180%);
     background: rgba(17, 25, 40, 0.85);
-    padding: 50px 70px;
+    padding: 40px 60px;
     border-radius: 25px;
     border: 2px solid rgba(0, 255, 255, 0.4);
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4),
@@ -444,16 +496,18 @@ body {
     z-index: 10;
     animation: modalFadeIn 0.4s ease-out;
     text-align: center;
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 .start-screen h2 {
-    font-size: 3em;
+    font-size: 2.5em;
     background: linear-gradient(45deg, #00ffff, #00aaff, #00ffff);
     background-size: 200% 200%;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 40px;
+    margin-bottom: 25px;
     font-weight: 900;
     letter-spacing: 4px;
     animation: gradientShift 3s ease infinite;
@@ -462,7 +516,7 @@ body {
 .difficulty-buttons {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 15px;
     margin-bottom: 30px;
 }
 
@@ -470,8 +524,8 @@ body {
     background: linear-gradient(135deg, rgba(0, 102, 255, 0.8), rgba(0, 136, 255, 0.6));
     color: #ffffff;
     border: 2px solid rgba(0, 255, 255, 0.4);
-    padding: 18px 60px;
-    font-size: 1.4em;
+    padding: 14px 50px;
+    font-size: 1.3em;
     font-weight: 900;
     cursor: pointer;
     border-radius: 15px;
@@ -557,24 +611,24 @@ body::before {
     background: rgba(0, 50, 100, 0.3);
     border: 1px solid rgba(0, 255, 255, 0.3);
     border-radius: 15px;
-    padding: 25px;
-    margin-bottom: 40px;
+    padding: 20px;
+    margin-bottom: 25px;
     max-width: 600px;
     backdrop-filter: blur(10px);
 }
 
 .mission-title {
     color: #00ffff;
-    font-size: 1.8em;
-    margin-bottom: 15px;
+    font-size: 1.5em;
+    margin-bottom: 12px;
     letter-spacing: 3px;
     text-shadow: 0 0 10px rgba(0, 255, 255, 0.8);
     font-weight: 900;
 }
 
 .briefing-text {
-    font-size: 1em;
-    line-height: 1.6;
+    font-size: 0.95em;
+    line-height: 1.5;
     color: rgba(255, 255, 255, 0.85);
     text-align: left;
 }
@@ -635,7 +689,7 @@ body::before {
     transform: translate(-50%, -50%);
     backdrop-filter: blur(20px) saturate(180%);
     background: rgba(17, 25, 40, 0.9);
-    padding: 50px 70px;
+    padding: 40px 60px;
     border-radius: 25px;
     border: 2px solid rgba(255, 255, 0, 0.4);
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5),
@@ -644,6 +698,8 @@ body::before {
     z-index: 10;
     animation: modalFadeIn 0.4s ease-out;
     text-align: center;
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 .pause-screen h2 {
@@ -983,6 +1039,11 @@ body::before {
         font-size: 0.8em;
         margin-bottom: 4px;
         letter-spacing: 1px;
+    }
+
+    .boss-phase-label {
+        font-size: 0.6em;
+        margin-bottom: 3px;
     }
 
     .health-bar-container {

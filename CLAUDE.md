@@ -93,13 +93,32 @@ Shield functions: `damageShield()`, `breakShield()`, `restoreShield()`, `updateS
 
 Spawned uniformly at random (33% each). Speed scales with `sqrt(currentLevel - 1) * scalingFactor`.
 
-### Boss ("The Core")
+### Boss ("The Core") — Multi-Phase
 
 - Dark red octahedron with rotating reactor layers, 8 cannons, hex wireframe shield
 - Appears after `enemiesRequiredForBoss` kills (`10 + currentLevel * 2`)
 - Health: `Math.min(15 + currentLevel * 5, 60)` × difficulty multiplier (capped at 60 base)
 - After defeat: drops weapon pickup (+2.5 x offset) and optionally extra-life pickup (-2.5 x offset)
 - `defeatBoss()` → `bossPortalTimeout` → `createPortal()` / `animatePortalEntry()` / `triggerVictory()`
+
+**Multi-Phase System** — Boss has 3 phases triggered at health thresholds:
+
+| Phase | HP Range | Speed | Fire Rate | Burst | Attack Pattern |
+|-------|----------|-------|-----------|-------|----------------|
+| 1 | 100%–60% | 1× base | 1× base | 2 shots | Standard (single or 3-spread) |
+| 2 | 60%–30% | 1.5× base | 0.8× base | 3 shots | Always 3-bullet spread |
+| 3 | 30%–0% | 2× base | 0.6× base | 4 shots | 5-bullet wide spread |
+
+Phase transitions: `BOSS_PHASE_THRESHOLDS = [0.6, 0.3]`
+
+- `checkBossPhaseTransition()` checks health ratio after each hit
+- `triggerBossPhaseTransition(newPhase)` applies stat changes, visual effects, brief invulnerability
+- Boss is invulnerable for `BOSS_PHASE_TRANSITION_FRAMES` (90 frames ≈ 1.5s) during transition
+- Enemy bullets are cleared during transition to give the player a breather
+- Visual changes per phase: shield color shifts (red→orange→bright red), armor glows hotter,
+  animation speeds increase, emissive intensity rises
+- Health bar changes color per phase (red→orange→pulsing red) with phase markers at 60% and 30%
+- `#bossPhaseLabel` shows current phase with phase-specific styling
 
 ### Level System
 
