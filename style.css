@@ -350,7 +350,7 @@ body {
     transform: translate(-50%, -50%);
     backdrop-filter: blur(20px) saturate(180%);
     background: rgba(25, 5, 5, 0.85);
-    padding: 50px 70px;
+    padding: 40px 60px;
     border-radius: 25px;
     border: 2px solid rgba(255, 0, 0, 0.4);
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5),
@@ -359,24 +359,26 @@ body {
     z-index: 10;
     animation: modalFadeIn 0.4s ease-out;
     text-align: center;
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 .game-over h2 {
-    font-size: 4em;
+    font-size: 3em;
     background: linear-gradient(45deg, #ff0000, #ff6600);
     background-size: 200% 200%;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 20px;
+    margin-bottom: 15px;
     font-weight: 900;
     letter-spacing: 4px;
     animation: gradientShift 2s ease infinite;
 }
 
 .game-over p {
-    font-size: 1.6em;
-    margin-bottom: 25px;
+    font-size: 1.4em;
+    margin-bottom: 20px;
     color: #ffff00;
     text-shadow: 0 0 10px rgba(255, 255, 0, 0.6);
 }
@@ -485,7 +487,7 @@ body {
     transform: translate(-50%, -50%);
     backdrop-filter: blur(20px) saturate(180%);
     background: rgba(17, 25, 40, 0.85);
-    padding: 50px 70px;
+    padding: 40px 60px;
     border-radius: 25px;
     border: 2px solid rgba(0, 255, 255, 0.4);
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4),
@@ -494,16 +496,18 @@ body {
     z-index: 10;
     animation: modalFadeIn 0.4s ease-out;
     text-align: center;
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 .start-screen h2 {
-    font-size: 3em;
+    font-size: 2.5em;
     background: linear-gradient(45deg, #00ffff, #00aaff, #00ffff);
     background-size: 200% 200%;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 40px;
+    margin-bottom: 25px;
     font-weight: 900;
     letter-spacing: 4px;
     animation: gradientShift 3s ease infinite;
@@ -512,7 +516,7 @@ body {
 .difficulty-buttons {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 15px;
     margin-bottom: 30px;
 }
 
@@ -520,8 +524,8 @@ body {
     background: linear-gradient(135deg, rgba(0, 102, 255, 0.8), rgba(0, 136, 255, 0.6));
     color: #ffffff;
     border: 2px solid rgba(0, 255, 255, 0.4);
-    padding: 18px 60px;
-    font-size: 1.4em;
+    padding: 14px 50px;
+    font-size: 1.3em;
     font-weight: 900;
     cursor: pointer;
     border-radius: 15px;
@@ -607,24 +611,24 @@ body::before {
     background: rgba(0, 50, 100, 0.3);
     border: 1px solid rgba(0, 255, 255, 0.3);
     border-radius: 15px;
-    padding: 25px;
-    margin-bottom: 40px;
+    padding: 20px;
+    margin-bottom: 25px;
     max-width: 600px;
     backdrop-filter: blur(10px);
 }
 
 .mission-title {
     color: #00ffff;
-    font-size: 1.8em;
-    margin-bottom: 15px;
+    font-size: 1.5em;
+    margin-bottom: 12px;
     letter-spacing: 3px;
     text-shadow: 0 0 10px rgba(0, 255, 255, 0.8);
     font-weight: 900;
 }
 
 .briefing-text {
-    font-size: 1em;
-    line-height: 1.6;
+    font-size: 0.95em;
+    line-height: 1.5;
     color: rgba(255, 255, 255, 0.85);
     text-align: left;
 }
@@ -685,7 +689,7 @@ body::before {
     transform: translate(-50%, -50%);
     backdrop-filter: blur(20px) saturate(180%);
     background: rgba(17, 25, 40, 0.9);
-    padding: 50px 70px;
+    padding: 40px 60px;
     border-radius: 25px;
     border: 2px solid rgba(255, 255, 0, 0.4);
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5),
@@ -694,6 +698,8 @@ body::before {
     z-index: 10;
     animation: modalFadeIn 0.4s ease-out;
     text-align: center;
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 .pause-screen h2 {
