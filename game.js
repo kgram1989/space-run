@@ -2021,6 +2021,8 @@ function createBoss() {
     // Show boss health bar
     bossHealthBar.classList.remove('hidden');
     updateBossHealthBar();
+    updateBossPhaseLabel();
+    updateBossHealthBarColor();
 }
 
 function updateBossHealthBar() {
@@ -2028,6 +2030,23 @@ function updateBossHealthBar() {
         const healthPercent = (boss.health / boss.maxHealth) * 100;
         bossHealthFill.style.width = healthPercent + '%';
     }
+}
+
+function updateBossPhaseLabel() {
+    const label = document.getElementById('bossPhaseLabel');
+    if (!label || !boss) return;
+    const phaseNames = ['', 'PHASE 1', 'PHASE 2', 'PHASE 3'];
+    label.textContent = phaseNames[boss.phase] || '';
+    label.className = 'boss-phase-label';
+    if (boss.phase === 2) label.classList.add('phase-2');
+    else if (boss.phase === 3) label.classList.add('phase-3');
+}
+
+function updateBossHealthBarColor() {
+    if (!boss) return;
+    bossHealthFill.className = 'health-bar-fill';
+    if (boss.phase === 2) bossHealthFill.classList.add('phase-2');
+    else if (boss.phase === 3) bossHealthFill.classList.add('phase-3');
 }
 
 function updateBoss() {
@@ -2362,6 +2381,7 @@ function defeatBoss() {
     enemyBullets.forEach(b => { b.mesh.visible = false; }); // return to pool
     enemyBullets = [];
     bossHealthBar.classList.add('hidden');
+    bossHealthFill.className = 'health-bar-fill'; // Reset phase color
 
     // Award bonus points based on difficulty and level (with gradual scaling)
     const baseBonus = 500 + ((currentLevel - 1) * 250);  // 500, 750, 1000, 1250, etc.
@@ -3133,24 +3153,70 @@ function animateBossParts() {
     if (!boss || !boss.mesh) return;
     const c = boss.cached;
     const now = Date.now();
-    for (let i = 0; i < c.shields.length; i++) {
-        c.shields[i].rotation.y += 0.005;
-        c.shields[i].rotation.x += 0.003;
-        c.shields[i].material.opacity = 0.12 + Math.sin(now * 0.002) * 0.05;
+    const phase = boss.phase;
+
+    // Phase-scaled animation speeds
+    const shieldRotMult = phase === 3 ? 3 : phase === 2 ? 2 : 1;
+    const armorSpeedMult = phase === 3 ? 2.5 : phase === 2 ? 1.6 : 1;
+    const pulseFreqMult = phase === 3 ? 3 : phase === 2 ? 2 : 1;
+    const ringSpeedMult = phase === 3 ? 3 : phase === 2 ? 2 : 1;
+
+    // Shield rotation and opacity — skip during phase transition (handled in updateBoss)
+    if (!boss.phaseTransitioning) {
+        for (let i = 0; i < c.shields.length; i++) {
+            c.shields[i].rotation.y += 0.005 * shieldRotMult;
+            c.shields[i].rotation.x += 0.003 * shieldRotMult;
+            const baseOpacity = phase === 3 ? 0.25 : phase === 2 ? 0.18 : 0.12;
+            const pulseRange = phase === 3 ? 0.1 : phase === 2 ? 0.07 : 0.05;
+            c.shields[i].material.opacity = baseOpacity + Math.sin(now * 0.002 * shieldRotMult) * pulseRange;
+
+            // Phase-specific shield color
+            if (phase === 3) {
+                c.shields[i].material.color.setHex(0xff2200);
+            } else if (phase === 2) {
+                c.shields[i].material.color.setHex(0xcc6600);
+            }
+        }
     }
+
+    // Armor plates orbit faster in later phases
     for (let i = 0; i < c.armor.length; i++) {
         const a = c.armor[i];
-        a.userData.orbitAngle += a.userData.orbitSpeed;
+        a.userData.orbitAngle += a.userData.orbitSpeed * armorSpeedMult;
         a.position.x = Math.cos(a.userData.orbitAngle) * 2.8;
         a.position.z = Math.sin(a.userData.orbitAngle) * 2.8;
         a.rotation.y = a.userData.orbitAngle;
+
+        // Phase 3: armor plates glow hot
+        if (phase === 3 && a.material.emissive) {
+            a.material.emissiveIntensity = 0.6 + Math.sin(now * 0.01) * 0.2;
+            a.material.emissive.setHex(0xcc3300);
+        } else if (phase === 2 && a.material.emissive) {
+            a.material.emissiveIntensity = 0.4;
+            a.material.emissive.setHex(0x884400);
+        }
     }
+
+    // Ring rotation scales with phase
     for (let i = 0; i < c.rings.length; i++) {
-        c.rings[i].rotation.z += c.rings[i].userData.rotationSpeed;
+        c.rings[i].rotation.z += c.rings[i].userData.rotationSpeed * ringSpeedMult;
     }
+
+    // Pulse effect intensifies with phase
     for (let i = 0; i < c.pulses.length; i++) {
-        const pulse = Math.sin(now * 0.006) * 0.12 + 1;
-        c.pulses[i].scale.set(pulse, pulse, pulse);
+        const pulseScale = Math.sin(now * 0.006 * pulseFreqMult) * (0.12 * phase) + 1;
+        c.pulses[i].scale.set(pulseScale, pulseScale, pulseScale);
+    }
+
+    // Phase 3: emissive children glow brighter
+    if (phase >= 2) {
+        for (let i = 0; i < c.emissiveChildren.length; i++) {
+            const mat = c.emissiveChildren[i].material;
+            if (mat.emissive) {
+                const intensity = phase === 3 ? 1.2 + Math.sin(now * 0.008) * 0.4 : 0.9;
+                mat.emissiveIntensity = intensity;
+            }
+        }
     }
 }
 
@@ -4289,6 +4355,7 @@ function startGame() {
     lastDropType = null;
     weaponAmmo = { spread: 0 };
     bossHealthBar.classList.add('hidden');
+    bossHealthFill.className = 'health-bar-fill'; // Reset phase color
 
     // Load level 1 theme
     loadLevelTheme(1);

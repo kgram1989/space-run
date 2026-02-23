@@ -193,7 +193,34 @@ body {
     letter-spacing: 3px;
 }
 
+.boss-phase-label {
+    font-size: 0.75em;
+    font-weight: 700;
+    color: #cc4444;
+    letter-spacing: 2px;
+    margin-bottom: 5px;
+    text-shadow: 0 0 8px rgba(139, 0, 0, 0.5);
+    transition: color 0.3s ease;
+}
+
+.boss-phase-label.phase-2 {
+    color: #ff8800;
+    text-shadow: 0 0 10px rgba(255, 136, 0, 0.6);
+}
+
+.boss-phase-label.phase-3 {
+    color: #ff2200;
+    text-shadow: 0 0 12px rgba(255, 34, 0, 0.7);
+    animation: phaseWarning 0.6s ease-in-out infinite;
+}
+
+@keyframes phaseWarning {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
 .health-bar-container {
+    position: relative;
     width: 300px;
     height: 20px;
     background: rgba(0, 0, 0, 0.6);
@@ -208,8 +235,31 @@ body {
     background: linear-gradient(90deg, #8b0000, #cc3300, #8b0000);
     background-size: 200% 100%;
     animation: healthPulse 2s ease-in-out infinite;
-    transition: width 0.3s ease;
+    transition: width 0.3s ease, background 0.5s ease;
     box-shadow: 0 0 15px rgba(139, 0, 0, 0.6);
+}
+
+.health-bar-fill.phase-2 {
+    background: linear-gradient(90deg, #cc6600, #ff8800, #cc6600);
+    background-size: 200% 100%;
+    box-shadow: 0 0 15px rgba(255, 136, 0, 0.6);
+}
+
+.health-bar-fill.phase-3 {
+    background: linear-gradient(90deg, #cc0000, #ff2200, #ff4400, #ff2200, #cc0000);
+    background-size: 200% 100%;
+    animation: healthPulse 0.8s ease-in-out infinite;
+    box-shadow: 0 0 20px rgba(255, 34, 0, 0.8);
+}
+
+.phase-marker {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.3);
+    pointer-events: none;
+    z-index: 1;
 }
 
 @keyframes healthPulse {
@@ -983,6 +1033,11 @@ body::before {
         font-size: 0.8em;
         margin-bottom: 4px;
         letter-spacing: 1px;
+    }
+
+    .boss-phase-label {
+        font-size: 0.6em;
+        margin-bottom: 3px;
     }
 
     .health-bar-container {
