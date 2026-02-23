@@ -1754,12 +1754,20 @@ function shootDefault(weapon) {
 }
 
 function shootSpread(weapon) {
-    const angles = [-0.10, -0.05, 0, 0.05, 0.10];
-    angles.forEach(angle => {
+    // Angles tuned so adjacent bullets stay within enemy hit radius (~1.5)
+    // over the full travel distance. Gap at Z=50 ≈ 0.03*50 = 1.5 units.
+    const shots = [
+        { xOff: -1.0, angle: -0.06 },
+        { xOff: -0.5, angle: -0.03 },
+        { xOff:  0.0, angle:  0    },
+        { xOff:  0.5, angle:  0.03 },
+        { xOff:  1.0, angle:  0.06 }
+    ];
+    shots.forEach(s => {
         const mesh = createBulletMesh(weapon, 0.18);
-        mesh.position.set(player.x, player.y, player.z + 4);
+        mesh.position.set(player.x + s.xOff, player.y, player.z + 4);
         const bullet = addBullet(mesh, weapon);
-        bullet.velocityX = angle * weapon.bulletSpeed;
+        bullet.velocityX = s.angle * weapon.bulletSpeed;
     });
 }
 
