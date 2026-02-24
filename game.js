@@ -2255,7 +2255,6 @@ function triggerBossPhaseTransition(newPhase) {
     boss.phaseTransitionTimer = BOSS_PHASE_TRANSITION_FRAMES;
 
     playBossPhaseSound();
-    shakeCamera(0.4);
 
     // Clear enemy bullets during transition to give player a breather
     enemyBullets.forEach(b => { b.mesh.visible = false; });
@@ -2282,7 +2281,7 @@ function triggerBossPhaseTransition(newPhase) {
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: newPhase === 2 ? 0xff8800 : 0xff0000,
         transparent: true,
-        opacity: 0.6
+        opacity: 0.75
     });
     const flashMesh = new THREE.Mesh(SHARED_GEO.bossFlash, flashMaterial);
     flashMesh.position.copy(boss.mesh.position);
@@ -2290,15 +2289,15 @@ function triggerBossPhaseTransition(newPhase) {
     particles.push({
         mesh: flashMesh,
         velocity: new THREE.Vector3(0, 0, 0),
-        life: 10,
+        life: 12,
         isFlash: true
     });
 
-    // Shockwave ring for phase transition (single ring, subtle)
+    // Shockwave ring for phase transition
     const ringMaterial = new THREE.MeshBasicMaterial({
         color: newPhase === 2 ? 0xff6600 : 0xff2200,
         transparent: true,
-        opacity: 0.5
+        opacity: 0.6
     });
     const ringMesh = new THREE.Mesh(SHARED_GEO.bossRing, ringMaterial);
     ringMesh.position.copy(boss.mesh.position);
@@ -2312,21 +2311,7 @@ function triggerBossPhaseTransition(newPhase) {
         expandRate: 0.2
     });
 
-    // Subtle FOV pulse
-    const originalFov = camera.fov;
-    const fovBump = newPhase === 3 ? 4 : 2;
-    camera.fov = originalFov + fovBump;
-    camera.updateProjectionMatrix();
-    const fovSteps = 8;
-    let fovStep = 0;
-    const fovInterval = setInterval(() => {
-        fovStep++;
-        camera.fov = originalFov + fovBump * (1 - fovStep / fovSteps);
-        camera.updateProjectionMatrix();
-        if (fovStep >= fovSteps) clearInterval(fovInterval);
-    }, 30);
-
-    // Small burst of energy particles
+    // Burst of energy particles
     const burstCount = newPhase === 3 ? 12 : 8;
     for (let i = 0; i < burstCount; i++) {
         const angle = (i / burstCount) * Math.PI * 2;
@@ -2489,13 +2474,12 @@ function defeatBoss() {
 
     playExplosionSound();
     playLevelCompleteSound();
-    shakeCamera(0.4);
 
     // Flash effect for boss defeat
     const flashMaterial = new THREE.MeshBasicMaterial({
         color: 0xffff00,
         transparent: true,
-        opacity: 0.7
+        opacity: 0.8
     });
     const flashMesh = new THREE.Mesh(SHARED_GEO.bossFlash, flashMaterial);
     flashMesh.position.copy(boss.mesh.position);
@@ -2503,15 +2487,15 @@ function defeatBoss() {
     particles.push({
         mesh: flashMesh,
         velocity: new THREE.Vector3(0, 0, 0),
-        life: 8,
+        life: 10,
         isFlash: true
     });
 
-    // Single shockwave ring for death explosion
+    // Shockwave ring for death explosion
     const ringMaterial = new THREE.MeshBasicMaterial({
         color: 0xff3300,
         transparent: true,
-        opacity: 0.6
+        opacity: 0.7
     });
     const ringMesh = new THREE.Mesh(SHARED_GEO.bossRing, ringMaterial);
     ringMesh.position.copy(boss.mesh.position);
@@ -2547,18 +2531,6 @@ function defeatBoss() {
         scene.add(particleMesh);
         particles.push(particle);
     }
-
-    // Subtle FOV pulse for defeat
-    const origFov = camera.fov;
-    camera.fov = origFov + 4;
-    camera.updateProjectionMatrix();
-    let fovS = 0;
-    const fovI = setInterval(() => {
-        fovS++;
-        camera.fov = origFov + 4 * (1 - fovS / 8);
-        camera.updateProjectionMatrix();
-        if (fovS >= 8) clearInterval(fovI);
-    }, 30);
 
     // Boss guaranteed weapon pickup — spawn near the player so it's reachable before portal
     spawnPickup(player.x + 2.5, player.y, player.z + 15, true);
