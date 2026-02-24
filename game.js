@@ -228,6 +228,24 @@ const PORTAL_SPAWN_DELAY = 1500;
 const BOSS_PHASE_THRESHOLDS = [0.6, 0.3]; // health ratios that trigger phase 2 and phase 3
 const BOSS_PHASE_TRANSITION_FRAMES = 90;   // ~1.5 seconds of invulnerability during transition // ms after boss defeat
 const LEVEL_MESSAGE_DURATION = 2500; // ms
+
+// Boss escape & minion system
+const BOSS_ESCAPE_THRESHOLD = 0.15; // Boss escapes at 15% HP on non-finale levels
+const BOSS_MINION_TIMER_INTERVAL = 600; // ~10 seconds at 60fps for finale timer-based spawns
+const ACT_FINALE_LEVELS = [5, 10, 15, 20];
+
+function getAct(level) { return Math.ceil(level / 5); } // 1-4
+function getActLevel(level) { return ((level - 1) % 5) + 1; } // 1-5 position within act
+function isActFinale(level) { return ACT_FINALE_LEVELS.indexOf(level) !== -1; }
+function getMinionCount(level) {
+    const al = getActLevel(level);
+    if (al < 3) return 0;
+    return al; // 3, 4, or 5
+}
+function getEscapeMinionCount(level) {
+    const act = getAct(level);
+    return act + 1; // Act 1: 2, Act 2: 3, Act 3: 3, Act 4: 4
+}
 const LEVEL_MESSAGE_FADE_TIME = 500; // ms
 const LEVEL_MESSAGE_TOTAL_TIME = 3000; // LEVEL_MESSAGE_DURATION + LEVEL_MESSAGE_FADE_TIME
 
@@ -532,6 +550,7 @@ const SHARED_GEO = {
     bossMuzzleFlash: new THREE.SphereGeometry(0.4, 8, 8),
     bossAfterimage: new THREE.SphereGeometry(3, 16, 16),
     bossExhaustParticle: new THREE.SphereGeometry(0.06, 4, 4),
+    minionBody: new THREE.OctahedronGeometry(0.6, 1),
 };
 
 // Shared materials — created once to avoid per-frame GPU allocations
@@ -2056,7 +2075,15 @@ function createBoss() {
         afterimages: [],
         afterimageTimer: 0,
         exhaustParticles: [],
-        armorDamageApplied: false
+        armorDamageApplied: false,
+        // Escape & minion system
+        escaping: false,
+        escapeTimer: 0,
+        canEscape: !isActFinale(currentLevel) && getActLevel(currentLevel) >= 3,
+        minionSpawnTimer: 0,
+        minionSpawnInterval: BOSS_MINION_TIMER_INTERVAL,
+        canSpawnMinions: getActLevel(currentLevel) >= 3,
+        isFinale: isActFinale(currentLevel)
     };
 
     // Cache animated children references (avoids per-frame traverse)
@@ -2125,6 +2152,26 @@ function updateBossHealthBarColor() {
 function updateBoss() {
     if (!boss) return;
 
+    // Handle boss escaping — retreat animation
+    if (boss.escaping) {
+        boss.escapeTimer--;
+        boss.mesh.position.z += 0.8; // Accelerate backward
+        boss.mesh.rotation.y += 0.05;
+        // Fade shield
+        const c = boss.cached;
+        for (let i = 0; i < c.shields.length; i++) {
+            c.shields[i].material.opacity = Math.max(0, c.shields[i].material.opacity - 0.01);
+        }
+        // Scale down slightly as it retreats
+        const scale = boss.mesh.scale.x * 0.995;
+        boss.mesh.scale.set(scale, scale, scale);
+        animateBossParts();
+        if (boss.escapeTimer <= 0 || boss.mesh.position.z > 100) {
+            finishBossEscape();
+        }
+        return;
+    }
+
     // Handle phase transition invulnerability countdown
     if (boss.phaseTransitioning) {
         boss.phaseTransitionTimer--;
@@ -2168,6 +2215,20 @@ function updateBoss() {
     boss.mesh.rotation.z = Math.sin(Date.now() * 0.001) * (0.1 * boss.phase);
 
     animateBossParts();
+
+    // Timer-based minion spawns (act finale only)
+    if (boss.isFinale && boss.canSpawnMinions) {
+        boss.minionSpawnTimer++;
+        // Spawn faster when below 25% HP
+        const interval = (boss.health / boss.maxHealth < 0.25)
+            ? Math.round(boss.minionSpawnInterval * 0.8)
+            : boss.minionSpawnInterval;
+        if (boss.minionSpawnTimer >= interval && countActiveMinions() < 8) {
+            boss.minionSpawnTimer = 0;
+            const count = getMinionCount(currentLevel);
+            spawnBossMinionWave(count, 'arc');
+        }
+    }
 
     // Boss shooting logic
     boss.fireTimer--;
@@ -2335,6 +2396,21 @@ function triggerBossPhaseTransition(newPhase) {
         });
     }
 
+    // Phase-triggered minion spawn
+    if (boss.canSpawnMinions) {
+        const count = getMinionCount(currentLevel);
+        if (count > 0) {
+            // Phase 2: always spawn on act levels 3-5
+            // Phase 3: spawn on act levels 4-5
+            const actLevel = getActLevel(currentLevel);
+            if (newPhase === 2 && actLevel >= 3) {
+                spawnBossMinionWave(count, 'arc');
+            } else if (newPhase === 3 && actLevel >= 4) {
+                spawnBossMinionWave(count, 'arc');
+            }
+        }
+    }
+
     // Update health bar phase indicator
     updateBossPhaseLabel();
     updateBossHealthBarColor();
@@ -2431,8 +2507,20 @@ function checkBossCollision() {
             }
 
             if (boss.health <= 0) {
-                defeatBoss();
-                break;  // Exit loop - boss is defeated, no need to check more bullets
+                if (boss.canEscape) {
+                    // Non-finale: boss escapes instead of dying
+                    escapeBoss();
+                    break;
+                } else {
+                    defeatBoss();
+                    break;
+                }
+            }
+
+            // Check for escape threshold on non-finale levels
+            if (boss.canEscape && !boss.escaping && (boss.health / boss.maxHealth) <= BOSS_ESCAPE_THRESHOLD) {
+                escapeBoss();
+                break;
             }
 
             // Check for phase transition after taking damage
@@ -2551,6 +2639,16 @@ function defeatBoss() {
     bullets = [];
     enemyBullets.forEach(b => { b.mesh.visible = false; }); // return to pool
     enemyBullets = [];
+
+    // Clean up boss minions
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        if (enemies[i].isBossMinion) {
+            disposeMesh(enemies[i].mesh);
+            scene.remove(enemies[i].mesh);
+            enemies.splice(i, 1);
+        }
+    }
+
     bossHealthBar.classList.add('hidden');
     bossHealthFill.className = 'health-bar-fill'; // Reset phase color
 
@@ -2577,6 +2675,216 @@ function defeatBoss() {
             triggerVictory();
             return;
         }
+        createPortal();
+        animatePortalEntry();
+    }, PORTAL_SPAWN_DELAY);
+}
+
+// === Boss Minion System ===
+
+function createMinionEnemy(x, y, z, vx, vz) {
+    const act = getAct(currentLevel);
+    // Minion color per act
+    const colors = [0xcc4444, 0x44cc66, 0x8888cc, 0x884466];
+    const color = colors[(act - 1) % colors.length];
+
+    const mat = new THREE.MeshStandardMaterial({
+        color: color,
+        emissive: color,
+        emissiveIntensity: 0.5,
+        metalness: 0.7,
+        roughness: 0.3,
+        transparent: true,
+        opacity: 1.0
+    });
+    const mesh = new THREE.Mesh(SHARED_GEO.minionBody, mat);
+    mesh.position.set(x, y, z);
+    mesh.scale.set(1.2, 1.2, 1.2);
+
+    const light = new THREE.PointLight(color, 2, 10);
+    mesh.add(light);
+    enemyLights.push(light);
+
+    scene.add(mesh);
+
+    const minionHP = act >= 4 ? 2 : 1;
+    const enemy = {
+        mesh: mesh,
+        speed: 0.3 + act * 0.05,
+        type: 0, // use type 0 for point calculation
+        hp: minionHP,
+        lateralSpeed: vx,
+        lateralDirection: 1,
+        waveOffset: 0,
+        waveAmplitude: 0,
+        fireTimer: act >= 3 ? (60 + Math.floor(Math.random() * 60)) : 99999, // Acts 3-4 shoot once
+        fireInterval: 99999, // Only fire once via initial timer
+        dashCooldown: 0,
+        dashing: false,
+        dashDuration: 0,
+        dashTargetX: 0,
+        isBossMinion: true, // Flag: don't count toward boss threshold
+        minionVelocityX: vx,
+        minionVelocityZ: vz,
+        cached: { rings: [], pulses: [], wings: [], weapons: [], spikes: [], armorPlates: [], turretTips: [], allMaterials: [{ material: mat }] }
+    };
+
+    enemies.push(enemy);
+    return enemy;
+}
+
+function spawnBossMinionWave(count, pattern) {
+    if (!boss) return;
+    const bossPos = boss.mesh.position;
+
+    if (pattern === 'arc') {
+        // Arc formation from boss position, fanning toward player
+        const arcSpread = Math.PI * (count / 6); // wider arc with more enemies
+        for (let i = 0; i < count; i++) {
+            const t = count === 1 ? 0 : (i / (count - 1)) - 0.5; // -0.5 to 0.5
+            const angle = t * arcSpread;
+            const spawnX = bossPos.x + Math.sin(angle) * 8;
+            const spawnZ = bossPos.z - 3;
+            const vx = Math.sin(angle) * 0.08;
+            const vz = -0.15 - Math.random() * 0.05;
+            createMinionEnemy(spawnX, bossPos.y, spawnZ, vx, vz);
+        }
+    } else if (pattern === 'distraction') {
+        // Flat horizontal line between boss and player
+        const midZ = (bossPos.z + player.z) / 2;
+        const spread = 20;
+        for (let i = 0; i < count; i++) {
+            const t = count === 1 ? 0 : (i / (count - 1)) - 0.5;
+            const spawnX = t * spread;
+            const vz = -0.2 - Math.random() * 0.05;
+            createMinionEnemy(spawnX, bossPos.y, midZ, 0, vz);
+        }
+    }
+}
+
+function countActiveMinions() {
+    let count = 0;
+    for (let i = 0; i < enemies.length; i++) {
+        if (enemies[i].isBossMinion && !enemies[i].dying) count++;
+    }
+    return count;
+}
+
+// === Boss Escape System ===
+
+function escapeBoss() {
+    if (!boss) return;
+
+    // Clean up boss visual enhancement particles
+    if (boss.afterimages) {
+        boss.afterimages.forEach(ai => { ai.mesh.material.dispose(); scene.remove(ai.mesh); });
+        boss.afterimages = [];
+    }
+    if (boss.exhaustParticles) {
+        boss.exhaustParticles.forEach(ep => { ep.mesh.material.dispose(); scene.remove(ep.mesh); });
+        boss.exhaustParticles = [];
+    }
+
+    playLevelCompleteSound();
+
+    // Shield flare effect
+    const flashMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff8800,
+        transparent: true,
+        opacity: 0.5
+    });
+    const flashMesh = new THREE.Mesh(SHARED_GEO.bossFlash, flashMaterial);
+    flashMesh.position.copy(boss.mesh.position);
+    scene.add(flashMesh);
+    particles.push({
+        mesh: flashMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 8,
+        isFlash: true
+    });
+
+    // Conditional distraction spawn — only if no minions on field
+    const actLevel = getActLevel(currentLevel);
+    if (actLevel >= 3 && countActiveMinions() === 0) {
+        const count = getEscapeMinionCount(currentLevel);
+        spawnBossMinionWave(count, 'distraction');
+    }
+
+    // Mark boss as escaping — updateBoss will handle the retreat animation
+    boss.escaping = true;
+    boss.escapeTimer = 120; // ~2 seconds
+    boss.health = 1; // Floor HP so it can't die during escape
+
+    // Stop shooting
+    boss.fireTimer = 99999;
+
+    // Clear enemy bullets
+    enemyBullets.forEach(b => { b.mesh.visible = false; });
+    enemyBullets = [];
+
+    // Partial bonus — 60% of normal
+    const baseBonus = 500 + ((currentLevel - 1) * 250);
+    const bonusMultiplier = difficultySettings[difficulty].bossBonusMultiplier;
+    const levelBonus = Math.round(baseBonus * bonusMultiplier * 0.6);
+    score += levelBonus;
+    updateScore();
+    createScorePopup(boss.mesh.position.x, boss.mesh.position.y, boss.mesh.position.z, levelBonus);
+}
+
+function finishBossEscape() {
+    if (!boss) return;
+
+    // Warp flash at boss position
+    const flashMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.6
+    });
+    const flashMesh = new THREE.Mesh(SHARED_GEO.bossFlash, flashMaterial);
+    flashMesh.position.copy(boss.mesh.position);
+    scene.add(flashMesh);
+    particles.push({
+        mesh: flashMesh,
+        velocity: new THREE.Vector3(0, 0, 0),
+        life: 8,
+        isFlash: true
+    });
+
+    // Dispose boss
+    boss.mesh.traverse((child) => {
+        if (child.isLight && child.dispose) child.dispose();
+    });
+    disposeMesh(boss.mesh);
+    scene.remove(boss.mesh);
+    boss = null;
+    bossActive = false;
+    levelTransitioning = true;
+
+    // Clear bullets
+    bullets.forEach(b => { scene.remove(b.mesh); });
+    bullets = [];
+    enemyBullets.forEach(b => { b.mesh.visible = false; });
+    enemyBullets = [];
+
+    // Clean up boss minions
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        if (enemies[i].isBossMinion) {
+            disposeMesh(enemies[i].mesh);
+            scene.remove(enemies[i].mesh);
+            enemies.splice(i, 1);
+        }
+    }
+
+    bossHealthBar.classList.add('hidden');
+    bossHealthFill.className = 'health-bar-fill';
+
+    // Weapon pickup on escape too
+    spawnPickup(player.x + 2.5, player.y, player.z + 15, true);
+
+    // Portal after delay
+    bossPortalTimeout = setTimeout(() => {
+        bossPortalTimeout = null;
+        if (!gameRunning) return;
         createPortal();
         animatePortalEntry();
     }, PORTAL_SPAWN_DELAY);
@@ -3585,6 +3893,21 @@ function updateEnemies() {
             continue;
         }
 
+        // Minion movement — straight-line rush with lateral spread
+        if (enemy.isBossMinion) {
+            enemy.mesh.position.x += enemy.minionVelocityX;
+            enemy.mesh.position.z += enemy.minionVelocityZ;
+            enemy.mesh.rotation.y += 0.05;
+            enemy.mesh.rotation.z += 0.03;
+            // Remove if past player
+            if (enemy.mesh.position.z < -15) {
+                disposeMesh(enemy.mesh);
+                scene.remove(enemy.mesh);
+                enemies.splice(i, 1);
+            }
+            continue;
+        }
+
         // Normal movement
         enemy.mesh.position.z -= enemy.speed;
 
@@ -3765,13 +4088,17 @@ function checkCollisions() {
                     (Math.random() - 0.5) * 0.3
                 );
 
-                const addedPoints = Math.round(difficultySettings[difficulty].enemyPoints * (ENEMY_TYPE_POINTS[enemy.type] || 1) * currentLevel);
+                // Minions give 25% score, don't count toward boss threshold
+                const pointMult = enemy.isBossMinion ? 0.25 : 1;
+                const addedPoints = Math.round(difficultySettings[difficulty].enemyPoints * (ENEMY_TYPE_POINTS[enemy.type] || 1) * currentLevel * pointMult);
                 score += addedPoints;
                 updateScore();
                 createScorePopup(enemyPos.x, enemyPos.y, enemyPos.z, addedPoints);
 
-                // Track enemies defeated for boss trigger
-                enemiesDefeatedThisLevel++;
+                // Track enemies defeated for boss trigger (minions excluded)
+                if (!enemy.isBossMinion) {
+                    enemiesDefeatedThisLevel++;
+                }
 
                 // Track kills for extra life drop
                 targetsHit++;
@@ -4548,6 +4875,7 @@ async function endGame() {
             boss.exhaustParticles.forEach(ep => { ep.mesh.material.dispose(); scene.remove(ep.mesh); });
             boss.exhaustParticles = [];
         }
+        boss.escaping = false;
     }
 
     if (touchControlsEl) touchControlsEl.style.pointerEvents = 'none';
