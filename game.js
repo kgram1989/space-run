@@ -234,6 +234,86 @@ const BOSS_ESCAPE_THRESHOLD = 0.15; // Boss escapes at 15% HP on non-finale leve
 const BOSS_MINION_TIMER_INTERVAL = 600; // ~10 seconds at 60fps for finale timer-based spawns
 const ACT_FINALE_LEVELS = [5, 10, 15, 20];
 
+// Per-arc boss visual and stat configuration
+const ACT_BOSS_CONFIG = {
+    1: {
+        name: 'VANGUARD',
+        coreColor: 0x003388, coreEmissive: 0x001166,
+        shieldColor: 0x002266, shieldEmissive: 0x001144,
+        wireColor: 0x2255aa,
+        weaponColor: 0x000a22, weaponEmissive: 0x002266,
+        lanceEmissive: 0x001166, lanceTipColor: 0x66aaff,
+        reactorOuter: 0x0055cc, reactorInner: 0xaaddff, reactorRing: 0x003388,
+        glowColor: 0x001144,
+        armorColor: 0x000a22, armorEmissive: 0x001144,
+        auraBase: 0x0066ff, auraP2: 0x0099ff, auraP3: 0x00ccff,
+        veinBase: 0x0044cc, veinP2: 0x0066ee, veinP3: 0x0099ff,
+        lightBase: 0x000088, lightSide: 0x000066,
+        lightP2Base: 0x0033aa, lightP3Base: 0x0055cc,
+        lightP2Side: 0x002288, lightP3Side: 0x0033aa,
+        afterimageBase: 0x001166, afterimageP2: 0x002288, afterimageP3: 0x003399,
+        flashP2: 0x3388ff, flashP3: 0x0066ff,
+        scale: 1.8, baseSpeed: 0.08, fireIntervalMult: 1.1
+    },
+    2: {
+        name: 'RAVAGER',
+        coreColor: 0x006622, coreEmissive: 0x003311,
+        shieldColor: 0x004422, shieldEmissive: 0x002211,
+        wireColor: 0x226644,
+        weaponColor: 0x001100, weaponEmissive: 0x003322,
+        lanceEmissive: 0x002211, lanceTipColor: 0x44ee77,
+        reactorOuter: 0x008833, reactorInner: 0xaaffcc, reactorRing: 0x005522,
+        glowColor: 0x002211,
+        armorColor: 0x001100, armorEmissive: 0x002211,
+        auraBase: 0x00cc44, auraP2: 0x00ee66, auraP3: 0x00ff99,
+        veinBase: 0x00aa33, veinP2: 0x00cc44, veinP3: 0x00ee66,
+        lightBase: 0x004400, lightSide: 0x002200,
+        lightP2Base: 0x006600, lightP3Base: 0x009900,
+        lightP2Side: 0x004400, lightP3Side: 0x006600,
+        afterimageBase: 0x003300, afterimageP2: 0x005500, afterimageP3: 0x007700,
+        flashP2: 0x33cc66, flashP3: 0x00ff44,
+        scale: 1.9, baseSpeed: 0.10, fireIntervalMult: 1.0
+    },
+    3: {
+        name: 'OVERLORD',
+        coreColor: 0x440088, coreEmissive: 0x220044,
+        shieldColor: 0x330066, shieldEmissive: 0x110033,
+        wireColor: 0x554499,
+        weaponColor: 0x0a0022, weaponEmissive: 0x220044,
+        lanceEmissive: 0x110033, lanceTipColor: 0xbb66ff,
+        reactorOuter: 0x5500aa, reactorInner: 0xddaaff, reactorRing: 0x330077,
+        glowColor: 0x110022,
+        armorColor: 0x0a0022, armorEmissive: 0x110033,
+        auraBase: 0x7700ff, auraP2: 0xaa00ff, auraP3: 0xcc44ff,
+        veinBase: 0x5500cc, veinP2: 0x7700dd, veinP3: 0xaa00ff,
+        lightBase: 0x220044, lightSide: 0x110033,
+        lightP2Base: 0x440088, lightP3Base: 0x6600bb,
+        lightP2Side: 0x220055, lightP3Side: 0x330077,
+        afterimageBase: 0x220044, afterimageP2: 0x440066, afterimageP3: 0x660099,
+        flashP2: 0xaa44ff, flashP3: 0x8800ff,
+        scale: 2.0, baseSpeed: 0.12, fireIntervalMult: 0.9
+    },
+    4: {
+        name: 'THE CORE',
+        coreColor: 0x8b0000, coreEmissive: 0x660000,
+        shieldColor: 0x660000, shieldEmissive: 0x550000,
+        wireColor: 0x992222,
+        weaponColor: 0x1a0000, weaponEmissive: 0x880000,
+        lanceEmissive: 0x770000, lanceTipColor: 0xcc6600,
+        reactorOuter: 0xcc4400, reactorInner: 0xffccaa, reactorRing: 0x993300,
+        glowColor: 0x660000,
+        armorColor: 0x220000, armorEmissive: 0x550000,
+        auraBase: 0xff4400, auraP2: 0xff6600, auraP3: 0xffaa00,
+        veinBase: 0xff3300, veinP2: 0xff4400, veinP3: 0xff6600,
+        lightBase: 0x880000, lightSide: 0x660000,
+        lightP2Base: 0xcc4400, lightP3Base: 0xff4400,
+        lightP2Side: 0xcc5500, lightP3Side: 0xff6600,
+        afterimageBase: 0x880000, afterimageP2: 0xcc4400, afterimageP3: 0xff2200,
+        flashP2: 0xff8800, flashP3: 0xff0000,
+        scale: 2.0, baseSpeed: 0.15, fireIntervalMult: 0.85
+    }
+};
+
 function getAct(level) { return Math.ceil(level / 5); } // 1-4
 function getActLevel(level) { return ((level - 1) % 5) + 1; } // 1-5 position within act
 function isActFinale(level) { return ACT_FINALE_LEVELS.indexOf(level) !== -1; }
@@ -1854,13 +1934,15 @@ function updateEnemyBullets() {
 
 // Create Boss Enemy
 function createBoss() {
+    const act = getAct(currentLevel);
+    const cfg = ACT_BOSS_CONFIG[act] || ACT_BOSS_CONFIG[4];
     const group = new THREE.Group();
 
     // Smooth spherical core
     const coreGeo = new THREE.SphereGeometry(3, 32, 32);
     const coreMat = new THREE.MeshStandardMaterial({
-        color: 0x8b0000,
-        emissive: 0x660000,
+        color: cfg.coreColor,
+        emissive: cfg.coreEmissive,
         emissiveIntensity: 0.8,
         metalness: 0.9,
         roughness: 0.1
@@ -1870,8 +1952,8 @@ function createBoss() {
     // Energy shield sphere (smoother)
     const shieldGeo = new THREE.SphereGeometry(4, 24, 24);
     const shieldMat = new THREE.MeshStandardMaterial({
-        color: 0x660000,
-        emissive: 0x550000,
+        color: cfg.shieldColor,
+        emissive: cfg.shieldEmissive,
         emissiveIntensity: 0.4,
         transparent: true,
         opacity: 0.3,
@@ -1883,7 +1965,7 @@ function createBoss() {
     // Hex wireframe shield overlay
     const bossWireGeo = new THREE.IcosahedronGeometry(4.2, 1);
     const bossWireMat = new THREE.MeshBasicMaterial({
-        color: 0x992222,
+        color: cfg.wireColor,
         wireframe: true,
         transparent: true,
         opacity: 0.12
@@ -1896,21 +1978,21 @@ function createBoss() {
     const heavyMountGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
     const heavyBarrelGeo = new THREE.CylinderGeometry(0.15, 0.2, 2.0, 10);
     const heavyMat = new THREE.MeshStandardMaterial({
-        color: 0x1a0000,
-        emissive: 0x880000,
+        color: cfg.weaponColor,
+        emissive: cfg.weaponEmissive,
         emissiveIntensity: 0.5,
         metalness: 1.0
     });
     const lanceGeo = new THREE.ConeGeometry(0.2, 2.5, 8);
     const lanceMat = new THREE.MeshStandardMaterial({
-        color: 0x0a0000,
-        emissive: 0x770000,
+        color: cfg.weaponColor,
+        emissive: cfg.lanceEmissive,
         emissiveIntensity: 0.6,
         metalness: 1.0
     });
     const lanceTipGeo = new THREE.SphereGeometry(0.15, 8, 8);
     const lanceTipMat = new THREE.MeshBasicMaterial({
-        color: 0xcc6600,
+        color: cfg.lanceTipColor,
         transparent: true,
         opacity: 0.8
     });
@@ -1944,7 +2026,7 @@ function createBoss() {
     // Layered reactor: outer glow + inner core + energy ring
     const reactorOuterGeo = new THREE.SphereGeometry(1.5, 24, 24);
     const reactorOuterMat = new THREE.MeshBasicMaterial({
-        color: 0xcc4400,
+        color: cfg.reactorOuter,
         transparent: true,
         opacity: 0.4
     });
@@ -1954,7 +2036,7 @@ function createBoss() {
 
     const reactorInnerGeo = new THREE.SphereGeometry(0.8, 16, 16);
     const reactorInnerMat = new THREE.MeshBasicMaterial({
-        color: 0xffccaa,
+        color: cfg.reactorInner,
         transparent: true,
         opacity: 0.85
     });
@@ -1964,7 +2046,7 @@ function createBoss() {
 
     const reactorRingGeo = new THREE.TorusGeometry(1.1, 0.06, 12, 24);
     const reactorRingMat = new THREE.MeshBasicMaterial({
-        color: 0x993300,
+        color: cfg.reactorRing,
         transparent: true,
         opacity: 0.6
     });
@@ -1976,7 +2058,7 @@ function createBoss() {
     // Reactor glow halo
     const bossGlowGeo = new THREE.SphereGeometry(2.0, 16, 16);
     const bossGlowMat = new THREE.MeshBasicMaterial({
-        color: 0x660000,
+        color: cfg.glowColor,
         transparent: true,
         opacity: 0.06
     });
@@ -1985,8 +2067,8 @@ function createBoss() {
     // Orbiting armor plates
     const armorGeo = new THREE.BoxGeometry(1.2, 0.15, 2.5);
     const armorMat = new THREE.MeshStandardMaterial({
-        color: 0x220000,
-        emissive: 0x550000,
+        color: cfg.armorColor,
+        emissive: cfg.armorEmissive,
         emissiveIntensity: 0.25,
         metalness: 0.95,
         roughness: 0.2
@@ -2007,7 +2089,7 @@ function createBoss() {
     const auraCount = isMobile ? 12 : 20;
     for (let i = 0; i < auraCount; i++) {
         const auraMat = new THREE.MeshBasicMaterial({
-            color: 0xff4400,
+            color: cfg.auraBase,
             transparent: true,
             opacity: 0.6
         });
@@ -2032,7 +2114,7 @@ function createBoss() {
     ];
     for (let i = 0; i < veinAngles.length; i++) {
         const veinMat = new THREE.MeshBasicMaterial({
-            color: 0xff3300,
+            color: cfg.veinBase,
             transparent: true,
             opacity: 0.3
         });
@@ -2044,7 +2126,7 @@ function createBoss() {
         group.add(vein);
     }
 
-    group.scale.set(2.0, 2.0, 2.0);
+    group.scale.set(cfg.scale, cfg.scale, cfg.scale);
 
     // Scale boss health based on difficulty and level
     const baseHealth = Math.min(15 + (currentLevel * 5), 60);
@@ -2052,25 +2134,29 @@ function createBoss() {
     const bossHealth = Math.round(baseHealth * difficultyMultiplier);
 
     const bossSettings = difficultySettings[difficulty];
+    const actBaseSpeed = cfg.baseSpeed;
+    // Apply act fire-rate multiplier on top of difficulty fire interval
+    const actFireInterval = Math.round(bossSettings.bossFireInterval * cfg.fireIntervalMult);
+    const actBurstPause = Math.round(bossSettings.bossBurstPauseFrames * cfg.fireIntervalMult);
     boss = {
         mesh: group,
         health: bossHealth,
         maxHealth: bossHealth,
-        speed: 0.1,
+        speed: actBaseSpeed,
         direction: 1,
         fireTimer: 60,
-        fireInterval: bossSettings.bossFireInterval,
+        fireInterval: actFireInterval,
         burstShotsPerCycle: bossSettings.bossBurstShots,
         burstShotsRemaining: bossSettings.bossBurstShots,
-        burstPauseFrames: bossSettings.bossBurstPauseFrames,
+        burstPauseFrames: actBurstPause,
         bulletSpeedMultiplier: bossSettings.bossBulletSpeedMultiplier,
         // Multi-phase properties
         phase: 1,
         phaseTransitioning: false,
         phaseTransitionTimer: 0,
-        baseFireInterval: bossSettings.bossFireInterval,
-        baseBurstPauseFrames: bossSettings.bossBurstPauseFrames,
-        baseSpeed: 0.1,
+        baseFireInterval: actFireInterval,
+        baseBurstPauseFrames: actBurstPause,
+        baseSpeed: actBaseSpeed,
         // Visual enhancement properties
         afterimages: [],
         afterimageTimer: 0,
@@ -2079,11 +2165,13 @@ function createBoss() {
         // Escape & minion system
         escaping: false,
         escapeTimer: 0,
-        canEscape: !isActFinale(currentLevel) && getActLevel(currentLevel) >= 3,
+        canEscape: !isActFinale(currentLevel),
         minionSpawnTimer: 0,
         minionSpawnInterval: BOSS_MINION_TIMER_INTERVAL,
         canSpawnMinions: getActLevel(currentLevel) >= 3,
-        isFinale: isActFinale(currentLevel)
+        isFinale: isActFinale(currentLevel),
+        // Arc visual config (used by animateBossParts)
+        actColors: cfg
     };
 
     // Cache animated children references (avoids per-frame traverse)
@@ -2104,13 +2192,13 @@ function createBoss() {
     boss.mesh.position.set(0, -5, 70);
     boss.mesh.castShadow = !isMobile;
 
-    // === Enhancement 3: Dynamic point lights per phase ===
-    const light = new THREE.PointLight(0x880000, 4, 25);
+    // === Enhancement 3: Dynamic point lights per phase (arc-colored) ===
+    const light = new THREE.PointLight(cfg.lightBase, 4, 25);
     boss.mesh.add(light);
-    const light2 = new THREE.PointLight(0x660000, 2, 18);
+    const light2 = new THREE.PointLight(cfg.lightSide, 2, 18);
     light2.position.set(3, 0, 0);
     boss.mesh.add(light2);
-    const light3 = new THREE.PointLight(0x660000, 2, 18);
+    const light3 = new THREE.PointLight(cfg.lightSide, 2, 18);
     light3.position.set(-3, 0, 0);
     boss.mesh.add(light3);
     boss.cached.dynamicLights = [light, light2, light3];
@@ -2135,8 +2223,8 @@ function updateBossHealthBar() {
 function updateBossPhaseLabel() {
     const label = document.getElementById('bossPhaseLabel');
     if (!label || !boss) return;
-    const phaseNames = ['', 'PHASE 1', 'PHASE 2', 'PHASE 3'];
-    label.textContent = phaseNames[boss.phase] || '';
+    const bossName = boss.actColors ? boss.actColors.name : 'THE CORE';
+    label.textContent = `${bossName} \u2014 PHASE ${boss.phase}`;
     label.className = 'boss-phase-label';
     if (boss.phase === 2) label.classList.add('phase-2');
     else if (boss.phase === 3) label.classList.add('phase-3');
@@ -2338,9 +2426,11 @@ function triggerBossPhaseTransition(newPhase) {
     boss.burstShotsRemaining = boss.burstShotsPerCycle;
     boss.fireTimer = 60; // Brief pause before new attack pattern starts
 
-    // Visual transition: flash on boss
+    // Visual transition: flash on boss (arc-colored)
+    const phaseColors = boss.actColors || ACT_BOSS_CONFIG[4];
+    const flashColor = newPhase === 2 ? phaseColors.flashP2 : phaseColors.flashP3;
     const flashMaterial = new THREE.MeshBasicMaterial({
-        color: newPhase === 2 ? 0xff8800 : 0xff0000,
+        color: flashColor,
         transparent: true,
         opacity: 0.75
     });
@@ -2356,7 +2446,7 @@ function triggerBossPhaseTransition(newPhase) {
 
     // Shockwave ring for phase transition
     const ringMaterial = new THREE.MeshBasicMaterial({
-        color: newPhase === 2 ? 0xff6600 : 0xff2200,
+        color: newPhase === 2 ? phaseColors.auraP2 : phaseColors.auraP3,
         transparent: true,
         opacity: 0.6
     });
@@ -2377,7 +2467,7 @@ function triggerBossPhaseTransition(newPhase) {
     for (let i = 0; i < burstCount; i++) {
         const angle = (i / burstCount) * Math.PI * 2;
         const bMat = new THREE.MeshBasicMaterial({
-            color: newPhase === 2 ? 0xff8800 : 0xff3300,
+            color: newPhase === 2 ? phaseColors.auraP2 : phaseColors.auraP3,
             transparent: true,
             opacity: 0.6
         });
@@ -2697,7 +2787,9 @@ function createMinionEnemy(x, y, z, vx, vz) {
         transparent: true,
         opacity: 1.0
     });
-    const mesh = new THREE.Mesh(SHARED_GEO.minionBody, mat);
+    // Use unique geometry per minion (not shared) so disposeMesh is safe
+    const minionGeo = new THREE.OctahedronGeometry(0.6, 1);
+    const mesh = new THREE.Mesh(minionGeo, mat);
     mesh.position.set(x, y, z);
     mesh.scale.set(1.2, 1.2, 1.2);
 
@@ -3633,6 +3725,7 @@ function animateBossParts() {
     const c = boss.cached;
     const now = Date.now();
     const phase = boss.phase;
+    const colors = boss.actColors || ACT_BOSS_CONFIG[4];
 
     // Phase-scaled animation speeds
     const shieldRotMult = phase === 3 ? 3 : phase === 2 ? 2 : 1;
@@ -3649,11 +3742,11 @@ function animateBossParts() {
             const pulseRange = phase === 3 ? 0.1 : phase === 2 ? 0.07 : 0.05;
             c.shields[i].material.opacity = baseOpacity + Math.sin(now * 0.002 * shieldRotMult) * pulseRange;
 
-            // Phase-specific shield color
+            // Phase-specific shield color (arc-based)
             if (phase === 3) {
-                c.shields[i].material.color.setHex(0xff2200);
+                c.shields[i].material.color.setHex(colors.auraP3);
             } else if (phase === 2) {
-                c.shields[i].material.color.setHex(0xcc6600);
+                c.shields[i].material.color.setHex(colors.auraP2);
             }
         }
     }
@@ -3666,13 +3759,13 @@ function animateBossParts() {
         a.position.z = Math.sin(a.userData.orbitAngle) * 2.8;
         a.rotation.y = a.userData.orbitAngle;
 
-        // Phase 3: armor plates glow hot
+        // Phase 3: armor plates glow hot (arc-colored)
         if (phase === 3 && a.material.emissive) {
             a.material.emissiveIntensity = 0.6 + Math.sin(now * 0.01) * 0.2;
-            a.material.emissive.setHex(0xcc3300);
+            a.material.emissive.setHex(colors.auraP3);
         } else if (phase === 2 && a.material.emissive) {
             a.material.emissiveIntensity = 0.4;
-            a.material.emissive.setHex(0x884400);
+            a.material.emissive.setHex(colors.auraP2);
         }
     }
 
@@ -3712,10 +3805,10 @@ function animateBossParts() {
         // Pulsing opacity
         const opacityPulse = Math.sin(now * 0.008 + a.userData.phaseOffset) * 0.3 + 0.5;
         a.material.opacity = opacityPulse * (phase === 3 ? 1.0 : phase === 2 ? 0.8 : 0.6);
-        // Phase color shift
-        if (phase === 3) a.material.color.setHex(0xffaa00);
-        else if (phase === 2) a.material.color.setHex(0xff6600);
-        else a.material.color.setHex(0xff4400);
+        // Phase color shift (arc-based)
+        if (phase === 3) a.material.color.setHex(colors.auraP3);
+        else if (phase === 2) a.material.color.setHex(colors.auraP2);
+        else a.material.color.setHex(colors.auraBase);
         // Scale pulse
         const s = 0.8 + Math.sin(now * 0.01 + a.userData.phaseOffset) * 0.4;
         a.scale.set(s, s, s);
@@ -3727,9 +3820,9 @@ function animateBossParts() {
         const veinPulse = Math.sin(now * 0.005 * pulseFreqMult + v.userData.pulseOffset);
         const baseOp = phase === 3 ? 0.6 : phase === 2 ? 0.45 : 0.3;
         v.material.opacity = baseOp + veinPulse * 0.2;
-        if (phase === 3) v.material.color.setHex(0xff6600);
-        else if (phase === 2) v.material.color.setHex(0xff4400);
-        else v.material.color.setHex(0xff3300);
+        if (phase === 3) v.material.color.setHex(colors.veinP3);
+        else if (phase === 2) v.material.color.setHex(colors.veinP2);
+        else v.material.color.setHex(colors.veinBase);
         // Slow rotation to make veins look alive
         v.rotation.z += 0.002 * ringSpeedMult;
     }
@@ -3739,20 +3832,20 @@ function animateBossParts() {
         const lights = boss.cached.dynamicLights;
         const lightPulse = Math.sin(now * 0.004) * 0.3 + 0.7;
         if (phase === 3) {
-            lights[0].color.setHex(0xff4400);
+            lights[0].color.setHex(colors.lightP3Base);
             lights[0].intensity = 6 * lightPulse;
             lights[0].distance = 35;
-            lights[1].color.setHex(0xff6600);
+            lights[1].color.setHex(colors.lightP3Side);
             lights[1].intensity = 4 * lightPulse;
-            lights[2].color.setHex(0xff6600);
+            lights[2].color.setHex(colors.lightP3Side);
             lights[2].intensity = 4 * lightPulse;
         } else if (phase === 2) {
-            lights[0].color.setHex(0xcc4400);
+            lights[0].color.setHex(colors.lightP2Base);
             lights[0].intensity = 5 * lightPulse;
             lights[0].distance = 30;
-            lights[1].color.setHex(0xcc5500);
+            lights[1].color.setHex(colors.lightP2Side);
             lights[1].intensity = 3 * lightPulse;
-            lights[2].color.setHex(0xcc5500);
+            lights[2].color.setHex(colors.lightP2Side);
             lights[2].intensity = 3 * lightPulse;
         } else {
             lights[0].intensity = 4 * lightPulse;
@@ -3767,7 +3860,7 @@ function animateBossParts() {
     if (boss.afterimageTimer >= afterimageInterval && !isMobile) {
         boss.afterimageTimer = 0;
         const afterMat = new THREE.MeshBasicMaterial({
-            color: phase === 3 ? 0xff2200 : phase === 2 ? 0xcc4400 : 0x880000,
+            color: phase === 3 ? colors.afterimageP3 : phase === 2 ? colors.afterimageP2 : colors.afterimageBase,
             transparent: true,
             opacity: phase === 3 ? 0.25 : 0.15,
             wireframe: true
@@ -5121,6 +5214,7 @@ function gameLoop(timestamp = 0) {
     if (bossActive) {
         updateBoss();
         checkBossCollision();
+        checkCollisions(); // Also check player bullets vs boss minions
     } else {
         checkCollisions();
 
