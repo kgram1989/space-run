@@ -470,6 +470,32 @@ body {
     transform: none;
 }
 
+#continueBtn {
+    background: linear-gradient(135deg, #ff9900, #ff6600);
+    color: #000000;
+    border: none;
+    padding: 18px 40px;
+    font-size: 1.15em;
+    font-weight: 900;
+    cursor: pointer;
+    border-radius: 15px;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    box-shadow: 0 4px 15px rgba(255, 153, 0, 0.4),
+                0 0 30px rgba(255, 153, 0, 0.2);
+}
+
+#continueBtn:hover {
+    transform: scale(1.03) translateY(-2px);
+    box-shadow: 0 6px 25px rgba(255, 153, 0, 0.6),
+                0 0 45px rgba(255, 153, 0, 0.3);
+}
+
+#continueBtn:active {
+    transform: scale(0.98) translateY(0);
+}
+
 .share-status {
     margin-top: 12px;
     margin-bottom: 0;
@@ -1149,6 +1175,11 @@ body::before {
     }
 
     #shareScoreBtn {
+        padding: 10px 22px;
+        font-size: 0.9em;
+    }
+
+    #continueBtn {
         padding: 10px 22px;
         font-size: 0.9em;
     }

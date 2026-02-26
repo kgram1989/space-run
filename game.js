@@ -326,6 +326,466 @@ function getEscapeMinionCount(level) {
     const act = getAct(level);
     return act + 1; // Act 1: 2, Act 2: 3, Act 3: 3, Act 4: 4
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEVEL-SPECIFIC BOSS SYSTEM
+// Each level has a unique boss with distinct mesh, movement, and special mechanic.
+// createBoss() calls buildBossMesh(level, group, cfg) to get the geometry.
+// updateBoss() calls updateBossCustomMechanics(boss) and updateBossAttack(boss).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// --- Per-level boss names shown in health bar ---
+const LEVEL_BOSS_NAMES = {
+     1: 'THE PROBE',           2: 'THE GUNSHIP',         3: 'THE CARRIER',
+     4: 'THE INTERCEPTOR CMD', 5: 'THE FLAGSHIP',        6: 'THE HARVESTER',
+     7: 'THE STALKER',         8: 'THE TURRET GOD',      9: 'THE SPLIT',
+    10: 'THE HIVE QUEEN',     11: 'THE LEVIATHAN',      12: 'THE PHANTOM',
+    13: 'THE BERSERKER',      14: 'THE ARCHITECT',      15: 'THE MIND',
+    16: 'THE WARDEN',         17: 'THE TITAN',          18: 'THE HARBINGER',
+    19: 'THE EMISSARY',       20: 'THE GATE'
+};
+
+// --- Per-level stat multipliers on top of ACT_BOSS_CONFIG and difficulty ---
+const LEVEL_BOSS_STATS = {
+     1: { baseSpeedMult: 2.2, fireIntervalMult: 2.0, scale: 1.5 },
+     2: { baseSpeedMult: 0.9, fireIntervalMult: 1.0, scale: 1.8 },
+     3: { baseSpeedMult: 0.5, fireIntervalMult: 999,  scale: 1.4 },
+     4: { baseSpeedMult: 1.4, fireIntervalMult: 0.9, scale: 1.8 },
+     5: { baseSpeedMult: 0.7, fireIntervalMult: 0.9, scale: 1.5 },
+     6: { baseSpeedMult: 0.0, fireIntervalMult: 1.0, scale: 1.9 },
+     7: { baseSpeedMult: 1.0, fireIntervalMult: 1.1, scale: 1.8 },
+     8: { baseSpeedMult: 0.0, fireIntervalMult: 999,  scale: 1.4 },
+     9: { baseSpeedMult: 0.9, fireIntervalMult: 1.0, scale: 1.9 },
+    10: { baseSpeedMult: 0.0, fireIntervalMult: 0.9, scale: 1.4 },
+    11: { baseSpeedMult: 0.7, fireIntervalMult: 1.1, scale: 1.8 },
+    12: { baseSpeedMult: 1.0, fireIntervalMult: 1.0, scale: 2.0 },
+    13: { baseSpeedMult: 0.3, fireIntervalMult: 2.0, scale: 2.0 },
+    14: { baseSpeedMult: 0.0, fireIntervalMult: 0.9, scale: 2.0 },
+    15: { baseSpeedMult: 0.3, fireIntervalMult: 0.8, scale: 1.6 },
+    16: { baseSpeedMult: 0.3, fireIntervalMult: 0.9, scale: 1.8 },
+    17: { baseSpeedMult: 0.0, fireIntervalMult: 999,  scale: 1.1 },
+    18: { baseSpeedMult: 0.0, fireIntervalMult: 999,  scale: 1.2 },
+    19: { baseSpeedMult: 0.0, fireIntervalMult: 999,  scale: 1.8 },
+    20: { baseSpeedMult: 0.3, fireIntervalMult: 1.0, scale: 1.1 }
+};
+
+// --- Initial custom state for per-boss scratch space ---
+function getBossCustomState(level) {
+    switch (level) {
+        case 1:  return { trackingBullets: [] };
+        case 2:  return { mines: [], mineDropTimer: 0 };
+        case 3:  return { hangarTimer: 0 };
+        case 4:  return { dashCooldown: 90, dashing: false, dashTimer: 0, dashVelX: 0, dashVelZ: 0 };
+        case 5:  return { emitterHp: [3, 3], emittersDestroyed: 0, broadsideMode: false, broadsideCooldown: 0, p2Entered: false };
+        case 6:  return { circleAngle: 0, beamTimer: 120 };
+        case 7:  return { cloakState: 'visible', cloakTimer: 200, cloakFade: 0 };
+        case 8:  return { satFireTimers: Array.from({length:8},(_,i)=>i*15), satAlive: Array(8).fill(true), satRespawned: false };
+        case 9:  return { split: false, halfB: null, halfBAngle: 0, halfBHp: 0 };
+        case 10: return { circleAngle: 0, eggs: [], eggTimer: 300 };
+        case 11: return { posHistory: [], segmentMeshes: [], segmentsInit: false };
+        case 12: return { teleportTimer: 100, teleporting: false, mirrorMesh: null, mirrorTimer: 200 };
+        case 13: return { rageTier: 0 };
+        case 14: return { barriers: [], barrierTimer: 220 };
+        case 15: return { ghostMesh: null, ghostPositions: [], ghostTimer: 0, shieldTimer: 0 };
+        case 16: return { flankerAngle: 0 };
+        case 17: return { cannonTimers: Array(12).fill(0), discAngle: 0 };
+        case 18: return { waveTimer: 0, faceOpen: false };
+        case 19: return { chargeLevel: 0, overloadTimer: 0, t: 0 };
+        case 20: return { gravityWells: [], ringWaves: [], beamActive: false, beamX: -20, beamDir: 1, beamTimer: 0 };
+        default: return {};
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MESH BUILDERS — one per level
+// Each fn populates group with THREE objects; tag key parts with userData flags
+// so animateBossParts() can animate them (shields/armor/rings/pulses/aura/veins).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildBossL1(group, cfg) {
+    // THE PROBE — flat torus disc + 4 sensor spokes
+    const discGeo = new THREE.TorusGeometry(3, 0.4, 8, 24);
+    const discMat = new THREE.MeshStandardMaterial({ color: 0xccccdd, emissive: 0x556677, emissiveIntensity: 0.6, metalness: 0.9, roughness: 0.1 });
+    const disc = new THREE.Mesh(discGeo, discMat);
+    disc.rotation.x = Math.PI / 2;
+    disc.userData.isRing = true; disc.userData.rotationSpeed = 0.015;
+    group.add(disc);
+    const armGeo = new THREE.CylinderGeometry(0.07, 0.07, 6, 6);
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, emissive: 0x334455, emissiveIntensity: 0.4, metalness: 0.8, roughness: 0.2 });
+    for (let i = 0; i < 4; i++) {
+        const a = i * Math.PI / 2;
+        const arm = new THREE.Mesh(armGeo, armMat.clone());
+        arm.rotation.z = Math.PI / 2; arm.position.set(Math.cos(a) * 3, 0, Math.sin(a) * 3);
+        group.add(arm);
+        const tipGeo = new THREE.SphereGeometry(0.2, 6, 6);
+        const tipMat = new THREE.MeshStandardMaterial({ color: 0x00ffff, emissive: 0x00cccc, emissiveIntensity: 1.5 });
+        const tip = new THREE.Mesh(tipGeo, tipMat);
+        tip.position.set(Math.cos(a) * 5.5, 0, Math.sin(a) * 5.5);
+        tip.userData.isPulse = true; group.add(tip);
+    }
+    const coreGeo = new THREE.SphereGeometry(1.0, 16, 16);
+    const coreMat = new THREE.MeshStandardMaterial({ color: 0xaabbcc, emissive: 0x334455, emissiveIntensity: 0.5, metalness: 1.0, roughness: 0.0 });
+    group.add(new THREE.Mesh(coreGeo, coreMat));
+}
+
+function buildBossL2(group, cfg) {
+    // THE GUNSHIP — elongated box hull + 4 struts + orange thrusters
+    const hullGeo = new THREE.BoxGeometry(6, 1.5, 3);
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x223344, emissive: 0x112233, emissiveIntensity: 0.3, metalness: 0.8, roughness: 0.2 });
+    group.add(new THREE.Mesh(hullGeo, hullMat));
+    const strutGeo = new THREE.CylinderGeometry(0.13, 0.13, 5, 6);
+    const strutMat = new THREE.MeshStandardMaterial({ color: 0x334455, emissive: 0x112233, emissiveIntensity: 0.3, metalness: 0.7, roughness: 0.3 });
+    [[5,0,0,Math.PI/2,0],[-5,0,0,Math.PI/2,0],[0,0,4,0,0],[0,0,-4,0,0]].forEach(([x,y,z,rz]) => {
+        const s = new THREE.Mesh(strutGeo, strutMat.clone());
+        s.position.set(x,y,z); s.rotation.z = rz; group.add(s);
+    });
+    const thrustGeo = new THREE.SphereGeometry(0.6, 8, 8);
+    for (let i = -1; i <= 1; i += 2) {
+        const t = new THREE.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff4400, emissiveIntensity: 1.5, transparent: true, opacity: 0.85 });
+        const m = new THREE.Mesh(thrustGeo, t);
+        m.position.set(i * 1.4, 0, -2.5); m.userData.isPulse = true; group.add(m);
+    }
+}
+
+function buildBossL3(group, cfg) {
+    // THE CARRIER — wide flat hull + 3 hangar bays, no weapons
+    const hullGeo = new THREE.BoxGeometry(12, 2, 5);
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x445566, emissive: 0x223344, emissiveIntensity: 0.3, metalness: 0.7, roughness: 0.3 });
+    group.add(new THREE.Mesh(hullGeo, hullMat));
+    [-4, 0, 4].forEach((x, i) => {
+        const bayGeo = new THREE.BoxGeometry(2.5, 0.5, 3.5);
+        const bayMat = new THREE.MeshStandardMaterial({ color: 0x004466, emissive: 0x0088aa, emissiveIntensity: 0.9, transparent: true, opacity: 0.85 });
+        const bay = new THREE.Mesh(bayGeo, bayMat);
+        bay.position.set(x, -1.3, 0); bay.userData.isHangar = true; bay.userData.hangarIndex = i;
+        group.add(bay);
+    });
+    const bridgeGeo = new THREE.BoxGeometry(2.5, 1.5, 2);
+    const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x556677, emissive: 0x334455, emissiveIntensity: 0.3, metalness: 0.8, roughness: 0.2 });
+    const bridge = new THREE.Mesh(bridgeGeo, bridgeMat);
+    bridge.position.set(0, 1.75, -1); group.add(bridge);
+}
+
+function buildBossL4(group, cfg) {
+    // THE INTERCEPTOR COMMANDER — sleek arrowhead shape
+    const bodyGeo = new THREE.ConeGeometry(2.5, 9, 8);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x002244, emissive: 0x003366, emissiveIntensity: 0.5, metalness: 1.0, roughness: 0.05 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.rotation.x = -Math.PI / 2; body.userData.isBossShield = true; group.add(body);
+    const wingGeo = new THREE.CylinderGeometry(0.1, 0.6, 5, 6);
+    const wingMat = new THREE.MeshStandardMaterial({ color: 0x001133, emissive: 0x002244, emissiveIntensity: 0.4, metalness: 0.9, roughness: 0.1 });
+    [[3.5, 0, 2.5, 0.5], [-3.5, 0, 2.5, -0.5]].forEach(([x,y,z,rz]) => {
+        const w = new THREE.Mesh(wingGeo, wingMat.clone());
+        w.position.set(x,y,z); w.rotation.z = rz; group.add(w);
+    });
+    const engGeo = new THREE.SphereGeometry(0.7, 8, 8);
+    for (let i = -1; i <= 1; i += 2) {
+        const m = new THREE.MeshStandardMaterial({ color: 0x00aaff, emissive: 0x0066ff, emissiveIntensity: 2.0, transparent: true, opacity: 0.85 });
+        const e = new THREE.Mesh(engGeo, m);
+        e.position.set(i * 1.2, 0, 3.5); e.userData.isPulse = true; group.add(e);
+    }
+}
+
+function buildBossL5(group, cfg) {
+    // THE FLAGSHIP — multi-tier warship hull + gold turrets + shield emitters
+    [[14,1.5,-0.8],[10,1.2,0],[6,1.0,0.8]].forEach(([w,h,y]) => {
+        const geo = new THREE.BoxGeometry(w, h, 5);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x112244, emissive: 0x112244, emissiveIntensity: 0.3, metalness: 0.9, roughness: 0.1 });
+        const m = new THREE.Mesh(geo, mat); m.position.y = y; group.add(m);
+    });
+    const turrGeo = new THREE.CylinderGeometry(0.6, 0.8, 1.5, 8);
+    const turrMat = new THREE.MeshStandardMaterial({ color: 0xcc9900, emissive: 0x886600, emissiveIntensity: 0.7, metalness: 0.9, roughness: 0.1 });
+    [-5, 0, 5].forEach((tx, ti) => {
+        for (let side = -1; side <= 1; side += 2) {
+            const t = new THREE.Mesh(turrGeo, turrMat.clone());
+            t.position.set(side * (7 - ti * 1.5), 1.5, tx - 1); group.add(t);
+        }
+    });
+    // Visible shield emitters — actual HP tracked in boss.custom.emitterHp
+    const emGeo = new THREE.SphereGeometry(1.2, 12, 12);
+    for (let i = -1; i <= 1; i += 2) {
+        const emMat = new THREE.MeshStandardMaterial({ color: cfg.shieldColor, emissive: cfg.shieldEmissive, emissiveIntensity: 1.0, transparent: true, opacity: 0.7 });
+        const em = new THREE.Mesh(emGeo, emMat);
+        em.position.set(i * 9, 0, 0); em.userData.isBossShield = true;
+        em.userData.emitterSide = i > 0 ? 0 : 1; group.add(em);
+    }
+}
+
+function buildBossL6(group, cfg) {
+    // THE HARVESTER — icosahedron core + 5 trailing tentacle arms
+    const coreGeo = new THREE.IcosahedronGeometry(3, 1);
+    const coreMat = new THREE.MeshStandardMaterial({ color: cfg.coreColor, emissive: cfg.coreEmissive, emissiveIntensity: 0.8, metalness: 0.6, roughness: 0.4 });
+    group.add(new THREE.Mesh(coreGeo, coreMat));
+    const pulseGeo = new THREE.SphereGeometry(1.5, 12, 12);
+    const pulseMat = new THREE.MeshStandardMaterial({ color: cfg.reactorInner, emissive: cfg.reactorInner, emissiveIntensity: 1.2, transparent: true, opacity: 0.7 });
+    const pulse = new THREE.Mesh(pulseGeo, pulseMat); pulse.userData.isPulse = true; group.add(pulse);
+    const armGeo = new THREE.CylinderGeometry(0.15, 0.5, 6, 6);
+    const armMat = new THREE.MeshStandardMaterial({ color: cfg.weaponColor, emissive: cfg.weaponEmissive, emissiveIntensity: 0.4, metalness: 0.5, roughness: 0.5 });
+    for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        const arm = new THREE.Mesh(armGeo, armMat.clone());
+        arm.position.set(Math.cos(a) * 4, -1, Math.sin(a) * 4);
+        arm.rotation.z = Math.cos(a) * 0.5; arm.rotation.x = Math.sin(a) * 0.5; group.add(arm);
+    }
+}
+
+function buildBossL7(group, cfg) {
+    // THE STALKER — angular icosahedron, dark, minimal detail (hard to see)
+    const bodyGeo = new THREE.IcosahedronGeometry(3, 0);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, emissive: 0x110011, emissiveIntensity: 0.15, metalness: 1.0, roughness: 0.0, transparent: true, opacity: 1.0 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.userData.isBossShield = true; group.add(body); // opacity tweened during cloak
+    const wireGeo = new THREE.IcosahedronGeometry(3.1, 0);
+    const wireMat = new THREE.MeshBasicMaterial({ color: 0x222244, wireframe: true, transparent: true, opacity: 0.4 });
+    const wire = new THREE.Mesh(wireGeo, wireMat);
+    wire.userData.isBossShield = true; group.add(wire);
+    const eyeGeo = new THREE.SphereGeometry(0.7, 8, 8);
+    const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 2.0 });
+    const eye = new THREE.Mesh(eyeGeo, eyeMat); eye.userData.isPulse = true; group.add(eye);
+}
+
+function buildBossL8(group, cfg) {
+    // THE TURRET GOD — large icosahedron core + 8 orbiting satellite pods
+    const coreGeo = new THREE.IcosahedronGeometry(4, 2);
+    const coreMat = new THREE.MeshStandardMaterial({ color: cfg.coreColor, emissive: cfg.coreEmissive, emissiveIntensity: 0.7, metalness: 0.9, roughness: 0.1 });
+    group.add(new THREE.Mesh(coreGeo, coreMat));
+    const ringGeo = new THREE.TorusGeometry(2, 0.2, 8, 24);
+    const ringMat = new THREE.MeshStandardMaterial({ color: cfg.reactorRing, emissive: cfg.reactorRing, emissiveIntensity: 1.0 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.userData.isRing = true; ring.userData.rotationSpeed = 0.025; group.add(ring);
+    const satGeo = new THREE.SphereGeometry(0.6, 8, 8);
+    for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2; const h = Math.sin(i * 0.8) * 2;
+        const satMat = new THREE.MeshStandardMaterial({ color: 0xcc2200, emissive: 0xff0000, emissiveIntensity: 0.8, metalness: 0.7, roughness: 0.3 });
+        const sat = new THREE.Mesh(satGeo, satMat);
+        sat.position.set(Math.cos(a) * 8, h, Math.sin(a) * 8);
+        sat.userData.isBossSatellite = true; sat.userData.satIndex = i;
+        sat.userData.orbitAngle = a; sat.userData.orbitHeight = h; group.add(sat);
+    }
+}
+
+function buildBossL9(group, cfg) {
+    // THE SPLIT — large dark-purple octahedron
+    const coreGeo = new THREE.OctahedronGeometry(4.5, 0);
+    const coreMat = new THREE.MeshStandardMaterial({ color: 0x330055, emissive: 0x220033, emissiveIntensity: 0.6, metalness: 0.8, roughness: 0.2 });
+    group.add(new THREE.Mesh(coreGeo, coreMat));
+    const innerGeo = new THREE.SphereGeometry(2, 16, 16);
+    const innerMat = new THREE.MeshStandardMaterial({ color: cfg.reactorInner, emissive: cfg.reactorInner, emissiveIntensity: 1.0, transparent: true, opacity: 0.6 });
+    const inner = new THREE.Mesh(innerGeo, innerMat); inner.userData.isPulse = true; group.add(inner);
+    const crackGeo = new THREE.CylinderGeometry(0.05, 0.05, 5.5, 4);
+    const crackMat = new THREE.MeshBasicMaterial({ color: 0x9900ff, transparent: true, opacity: 0.4 });
+    for (let i = 0; i < 6; i++) {
+        const c = new THREE.Mesh(crackGeo, crackMat.clone());
+        c.rotation.z = (i / 6) * Math.PI; c.rotation.x = (i / 6) * Math.PI * 0.5; group.add(c);
+    }
+}
+
+function buildBossL10(group, cfg) {
+    // THE HIVE QUEEN — large bumpy amber sphere + 8 larva pods orbiting
+    const bodyGeo = new THREE.SphereGeometry(5, 32, 32);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xcc8800, emissive: 0x885500, emissiveIntensity: 0.5, metalness: 0.3, roughness: 0.7 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.scale.set(1.2, 0.9, 1.1); body.userData.isBossShield = true; group.add(body);
+    const reactGeo = new THREE.SphereGeometry(2.5, 16, 16);
+    const reactMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xffaa00, emissiveIntensity: 1.0, transparent: true, opacity: 0.5 });
+    const react = new THREE.Mesh(reactGeo, reactMat); react.userData.isPulse = true; group.add(react);
+    const podGeo = new THREE.SphereGeometry(0.5, 8, 8);
+    for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const podMat = new THREE.MeshStandardMaterial({ color: 0xaacc00, emissive: 0x667700, emissiveIntensity: 0.7 });
+        const pod = new THREE.Mesh(podGeo, podMat);
+        pod.position.set(Math.cos(a) * 7, Math.sin(i * 0.7) * 2, Math.sin(a) * 7);
+        pod.userData.isBossAura = true; pod.userData.orbitAngle = a; pod.userData.orbitRadius = 7;
+        pod.userData.orbitSpeed = 0.008; pod.userData.orbitTilt = Math.sin(i * 0.7) * 0.3;
+        pod.userData.phaseOffset = i * 0.5; group.add(pod);
+    }
+}
+
+function buildBossL11(group, cfg) {
+    // THE LEVIATHAN — serpent head (body segments added dynamically in custom mechanics)
+    const headGeo = new THREE.SphereGeometry(3, 20, 20);
+    const headMat = new THREE.MeshStandardMaterial({ color: cfg.coreColor, emissive: cfg.coreEmissive, emissiveIntensity: 0.8, metalness: 0.7, roughness: 0.3 });
+    const head = new THREE.Mesh(headGeo, headMat); head.userData.isBossShield = true; group.add(head);
+    const crestGeo = new THREE.ConeGeometry(0.5, 2, 4);
+    const crestMat = new THREE.MeshStandardMaterial({ color: cfg.reactorRing, emissive: cfg.reactorRing, emissiveIntensity: 1.0 });
+    [-1.5, 0, 1.5].forEach(x => {
+        const c = new THREE.Mesh(crestGeo, crestMat.clone()); c.position.set(x, 3.2, 0); group.add(c);
+    });
+    const eyeGeo = new THREE.SphereGeometry(0.4, 8, 8);
+    const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, emissiveIntensity: 2.0 });
+    [-1.2, 1.2].forEach(ex => {
+        const e = new THREE.Mesh(eyeGeo, eyeMat.clone()); e.position.set(ex, 0.5, -2.5); e.userData.isPulse = true; group.add(e);
+    });
+}
+
+function buildBossL12(group, cfg) {
+    // THE PHANTOM — 6 stacked torus rings (skeleton silhouette), semi-transparent
+    [[3,1.5,0.25],[1.5,2.5,0.3],[0,3,0.3],[-1.5,2.5,0.25],[-3,1.5,0.2],[-4.5,0.8,0.15]].forEach(([y,r,tube], i) => {
+        const rGeo = new THREE.TorusGeometry(r, tube, 6, 12);
+        const rMat = new THREE.MeshStandardMaterial({ color: 0xeeeeff, emissive: 0x9999cc, emissiveIntensity: 0.5, transparent: true, opacity: 0.65, metalness: 0.1, roughness: 0.9 });
+        const ring = new THREE.Mesh(rGeo, rMat);
+        ring.position.y = y; ring.rotation.x = 0.1 * i;
+        ring.userData.isRing = true; ring.userData.rotationSpeed = i % 2 === 0 ? 0.015 : -0.012;
+        ring.userData.isBossShield = true; group.add(ring);
+    });
+}
+
+function buildBossL13(group, cfg) {
+    // THE BERSERKER — jagged cluster, dark gray, gets redder as HP drops
+    const coreGeo = new THREE.IcosahedronGeometry(3, 0);
+    const coreMat = new THREE.MeshStandardMaterial({ color: 0x444444, emissive: 0x222222, emissiveIntensity: 0.3, metalness: 0.9, roughness: 0.1 });
+    const core = new THREE.Mesh(coreGeo, coreMat); core.userData.isBossShield = true; group.add(core);
+    const spikeGeo = new THREE.ConeGeometry(0.4, 2.5, 5);
+    [[3.5,0,0],[-3.5,0,0],[0,3.5,0],[0,-3.5,0],[2.5,2.5,0],[-2.5,2.5,0],[2.5,-2.5,0],[0,0,3.5]].forEach(pos => {
+        const spikeMat = new THREE.MeshStandardMaterial({ color: 0x333333, emissive: 0x111111, emissiveIntensity: 0.2, metalness: 0.95, roughness: 0.05 });
+        const spike = new THREE.Mesh(spikeGeo, spikeMat);
+        spike.position.set(...pos); spike.lookAt(0, 0, 0); spike.rotateX(Math.PI); group.add(spike);
+    });
+}
+
+function buildBossL14(group, cfg) {
+    // THE ARCHITECT — clean rotating cube with torus rings, teal/cyan
+    const coreGeo = new THREE.BoxGeometry(3.5, 3.5, 3.5);
+    const coreMat = new THREE.MeshStandardMaterial({ color: 0x006688, emissive: 0x003344, emissiveIntensity: 0.5, metalness: 0.95, roughness: 0.05 });
+    group.add(new THREE.Mesh(coreGeo, coreMat));
+    const wireGeo = new THREE.BoxGeometry(4.3, 4.3, 4.3);
+    const wireMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.25 });
+    group.add(new THREE.Mesh(wireGeo, wireMat));
+    [[0,0.02],[Math.PI/2,-0.015]].forEach(([rx, rs]) => {
+        const rGeo = new THREE.TorusGeometry(3.5, 0.12, 8, 32);
+        const rMat = new THREE.MeshStandardMaterial({ color: 0x00ccff, emissive: 0x00aaff, emissiveIntensity: 1.2 });
+        const r = new THREE.Mesh(rGeo, rMat);
+        r.rotation.x = rx; r.userData.isRing = true; r.userData.rotationSpeed = rs; group.add(r);
+    });
+}
+
+function buildBossL15(group, cfg) {
+    // THE MIND — perfect white sphere + 12 orbiting debris pieces
+    const coreGeo = new THREE.SphereGeometry(4, 64, 64);
+    const coreMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.2, metalness: 0.0, roughness: 0.0 });
+    const core = new THREE.Mesh(coreGeo, coreMat); core.userData.isBossShield = true; group.add(core);
+    const debrisGeos = [new THREE.OctahedronGeometry(0.5,0), new THREE.BoxGeometry(0.6,0.6,0.6), new THREE.IcosahedronGeometry(0.5,0)];
+    for (let i = 0; i < 12; i++) {
+        const mat = new THREE.MeshStandardMaterial({ color: 0xaaaaff, emissive: 0x5555cc, emissiveIntensity: 0.8, metalness: 0.5, roughness: 0.5 });
+        const d = new THREE.Mesh(debrisGeos[i % 3], mat); const a = (i / 12) * Math.PI * 2; const tilt = (i % 3) * 0.4;
+        d.position.set(Math.cos(a) * 7, Math.sin(tilt) * 2.5, Math.sin(a) * 7);
+        d.userData.isBossAura = true; d.userData.orbitAngle = a; d.userData.orbitRadius = 7;
+        d.userData.orbitSpeed = 0.005 + (i % 3) * 0.002; d.userData.orbitTilt = tilt; d.userData.phaseOffset = i * 0.4;
+        group.add(d);
+    }
+}
+
+function buildBossL16(group, cfg) {
+    // THE WARDEN — tall monolith + 2 flanking obelisks (block bullets)
+    const monolithGeo = new THREE.BoxGeometry(2, 10, 2);
+    const monolithMat = new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0x441100, emissiveIntensity: 0.4, metalness: 1.0, roughness: 0.0 });
+    group.add(new THREE.Mesh(monolithGeo, monolithMat));
+    const runeGeo = new THREE.BoxGeometry(1.8, 0.08, 0.1);
+    const runeMat = new THREE.MeshStandardMaterial({ color: 0xffcc00, emissive: 0xffcc00, emissiveIntensity: 1.5 });
+    for (let i = -3; i <= 3; i++) {
+        const r = new THREE.Mesh(runeGeo, runeMat.clone()); r.position.set(0, i * 1.4, -1.05); r.userData.isPulse = true; group.add(r);
+    }
+    const flankerGeo = new THREE.BoxGeometry(1.5, 6, 1.5);
+    const flankerMat = new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0x330000, emissiveIntensity: 0.3, metalness: 0.9, roughness: 0.1 });
+    for (let i = -1; i <= 1; i += 2) {
+        const f = new THREE.Mesh(flankerGeo, flankerMat.clone());
+        f.position.set(i * 6, 0, 0); f.userData.isWardanShield = true;
+        f.userData.orbitAngle = i > 0 ? 0 : Math.PI; f.userData.orbitRadius = 6; group.add(f);
+    }
+}
+
+function buildBossL17(group, cfg) {
+    // THE TITAN — massive flat disc + 12 radial cannon pods
+    const discGeo = new THREE.CylinderGeometry(12, 12, 1.5, 36);
+    const discMat = new THREE.MeshStandardMaterial({ color: 0xaa4400, emissive: 0x772200, emissiveIntensity: 0.5, metalness: 0.8, roughness: 0.2 });
+    group.add(new THREE.Mesh(discGeo, discMat));
+    const reactGeo = new THREE.CylinderGeometry(2, 2, 2.5, 16);
+    const reactMat = new THREE.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff4400, emissiveIntensity: 1.0 });
+    const react = new THREE.Mesh(reactGeo, reactMat); react.userData.isPulse = true; group.add(react);
+    const cannonGeo = new THREE.CylinderGeometry(0.6, 0.8, 2.5, 8);
+    const cannonMat = new THREE.MeshStandardMaterial({ color: 0xcc3300, emissive: 0x880000, emissiveIntensity: 0.6, metalness: 0.9, roughness: 0.1 });
+    for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        const c = new THREE.Mesh(cannonGeo, cannonMat.clone());
+        c.position.set(Math.cos(a) * 9, 2, Math.sin(a) * 9);
+        c.userData.isBossCannon = true; c.userData.cannonIndex = i; c.userData.orbitAngle = a; group.add(c);
+    }
+}
+
+function buildBossL18(group, cfg) {
+    // THE HARBINGER — large torus ring, immune unless facing player
+    const torusGeo = new THREE.TorusGeometry(8, 1.5, 12, 48);
+    const torusMat = new THREE.MeshStandardMaterial({ color: 0x330055, emissive: 0x220033, emissiveIntensity: 0.6, metalness: 0.8, roughness: 0.2 });
+    const torus = new THREE.Mesh(torusGeo, torusMat);
+    torus.userData.isRing = true; torus.userData.rotationSpeed = 0.004; group.add(torus);
+    const voidGeo = new THREE.SphereGeometry(5, 24, 24);
+    const voidMat = new THREE.MeshBasicMaterial({ color: 0x220033, transparent: true, opacity: 0.4 });
+    const voidS = new THREE.Mesh(voidGeo, voidMat); voidS.userData.isPulse = true; group.add(voidS);
+    const rodGeo = new THREE.CylinderGeometry(0.2, 0.2, 3, 6);
+    const rodMat = new THREE.MeshStandardMaterial({ color: 0x9900cc, emissive: 0x660099, emissiveIntensity: 1.0 });
+    for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const rod = new THREE.Mesh(rodGeo, rodMat.clone());
+        rod.position.set(Math.cos(a) * 7, 0, Math.sin(a) * 7); rod.rotation.z = Math.PI / 2;
+        rod.userData.isBossAura = true; rod.userData.orbitAngle = a; rod.userData.orbitRadius = 7;
+        rod.userData.orbitSpeed = 0.003; rod.userData.orbitTilt = 0; rod.userData.phaseOffset = i * 0.3;
+        group.add(rod);
+    }
+}
+
+function buildBossL19(group, cfg) {
+    // THE EMISSARY — humanoid geometry assembly, absorbs player bullets
+    const torsoGeo = new THREE.OctahedronGeometry(2.2, 0);
+    const torsoMat = new THREE.MeshStandardMaterial({ color: 0xddaa00, emissive: 0xaa7700, emissiveIntensity: 0.7, metalness: 0.9, roughness: 0.1 });
+    group.add(new THREE.Mesh(torsoGeo, torsoMat));
+    const headGeo = new THREE.IcosahedronGeometry(1.2, 0);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xeebb00, emissive: 0xcc8800, emissiveIntensity: 0.9, metalness: 0.8, roughness: 0.2 });
+    const head = new THREE.Mesh(headGeo, headMat); head.position.y = 3.5; head.userData.isPulse = true; group.add(head);
+    const armGeo = new THREE.ConeGeometry(0.4, 5.5, 6);
+    const armMat = new THREE.MeshStandardMaterial({ color: 0xcc9900, emissive: 0x886600, emissiveIntensity: 0.5, metalness: 0.9, roughness: 0.1 });
+    for (let i = -1; i <= 1; i += 2) {
+        const arm = new THREE.Mesh(armGeo, armMat.clone()); arm.position.set(i * 4, 0, 0); arm.rotation.z = i * 0.6; group.add(arm);
+    }
+    const chargeGeo = new THREE.TorusGeometry(2.8, 0.15, 8, 24);
+    const chargeMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.0 });
+    const chargeRing = new THREE.Mesh(chargeGeo, chargeMat);
+    chargeRing.userData.isChargeRing = true; group.add(chargeRing);
+}
+
+function buildBossL20(group, cfg) {
+    // THE GATE — large torus with void sphere; P2 gains spines; P3 fires sweeping beam
+    const torusGeo = new THREE.TorusGeometry(10, 2, 16, 48);
+    const torusMat = new THREE.MeshStandardMaterial({ color: cfg.coreColor, emissive: cfg.coreEmissive, emissiveIntensity: 0.8, metalness: 0.9, roughness: 0.1 });
+    const torus = new THREE.Mesh(torusGeo, torusMat); torus.userData.isRing = true; torus.userData.rotationSpeed = 0.008; group.add(torus);
+    const voidGeo = new THREE.SphereGeometry(5, 32, 32);
+    const voidMat = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0x440000, emissiveIntensity: 0.5, transparent: true, opacity: 0.85, metalness: 0.0, roughness: 1.0 });
+    const voidS = new THREE.Mesh(voidGeo, voidMat); voidS.userData.isBossShield = true; voidS.userData.isPulse = true; group.add(voidS);
+    const outerGeo = new THREE.TorusGeometry(12.5, 0.4, 8, 48);
+    const outerMat = new THREE.MeshStandardMaterial({ color: cfg.reactorRing, emissive: cfg.reactorRing, emissiveIntensity: 0.8 });
+    const outer = new THREE.Mesh(outerGeo, outerMat); outer.userData.isRing = true; outer.userData.rotationSpeed = -0.005; group.add(outer);
+    const spikeGeo = new THREE.ConeGeometry(0.6, 3, 6);
+    const spikeMat = new THREE.MeshStandardMaterial({ color: cfg.weaponColor, emissive: cfg.weaponEmissive, emissiveIntensity: 0.8, metalness: 0.95, roughness: 0.05 });
+    for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const spike = new THREE.Mesh(spikeGeo, spikeMat.clone());
+        spike.position.set(Math.cos(a) * 12.5, Math.sin(a) * 12.5, 0);
+        spike.lookAt(0, 0, 0); spike.rotateX(Math.PI / 2);
+        spike.userData.isBossAura = true; spike.userData.orbitAngle = a; spike.userData.orbitRadius = 12.5;
+        spike.userData.orbitSpeed = 0.004; spike.userData.orbitTilt = 0; spike.userData.phaseOffset = i * 0.3;
+        group.add(spike);
+    }
+}
+
+// Dispatcher — calls the right builder for the level
+function buildBossMesh(level, group, cfg) {
+    const builders = {
+         1: buildBossL1,   2: buildBossL2,   3: buildBossL3,   4: buildBossL4,   5: buildBossL5,
+         6: buildBossL6,   7: buildBossL7,   8: buildBossL8,   9: buildBossL9,  10: buildBossL10,
+        11: buildBossL11, 12: buildBossL12, 13: buildBossL13, 14: buildBossL14, 15: buildBossL15,
+        16: buildBossL16, 17: buildBossL17, 18: buildBossL18, 19: buildBossL19, 20: buildBossL20
+    };
+    (builders[level] || buildBossL1)(group, cfg);
+}
+
 const LEVEL_MESSAGE_FADE_TIME = 500; // ms
 const LEVEL_MESSAGE_TOTAL_TIME = 3000; // LEVEL_MESSAGE_DURATION + LEVEL_MESSAGE_FADE_TIME
 
@@ -894,6 +1354,19 @@ function updateShieldHUD() {
     });
 }
 
+// Convenience helper used by boss custom mechanics to apply one hit of player damage.
+// Respects invulnerability frames so rapid proximity checks don't chain-kill in one frame.
+function damagePlayer() {
+    if (player.invulnerable) return;
+    if (player.shieldStrength > 0) {
+        damageShield();
+    } else {
+        lives--;
+        updateLives();
+        triggerDamageFlash();
+    }
+}
+
 function damageShield() {
     player.shieldStrength--;
     updateShieldHUD();
@@ -1375,6 +1848,22 @@ restartBtn.addEventListener('click', () => {
         shareStatusElement.classList.add('hidden');
     }
 });
+
+const continueBtn = document.getElementById('continueBtn');
+const continueLevelSpan = document.getElementById('continueLevel');
+if (continueBtn) {
+    continueBtn.addEventListener('click', () => {
+        const fromLevel = parseInt(continueLevelSpan?.textContent || '1', 10);
+        const titleEl = document.getElementById('gameOverTitle');
+        if (titleEl) titleEl.textContent = 'GAME OVER';
+        gameOverScreen.classList.add('hidden');
+        if (shareStatusElement) {
+            shareStatusElement.textContent = '';
+            shareStatusElement.classList.add('hidden');
+        }
+        startGame(fromLevel);
+    });
+}
 
 function setShareStatus(message) {
     if (!shareStatusElement) return;
@@ -1937,196 +2426,9 @@ function createBoss() {
     const act = getAct(currentLevel);
     const cfg = ACT_BOSS_CONFIG[act] || ACT_BOSS_CONFIG[4];
     const group = new THREE.Group();
-
-    // Smooth spherical core
-    const coreGeo = new THREE.SphereGeometry(3, 32, 32);
-    const coreMat = new THREE.MeshStandardMaterial({
-        color: cfg.coreColor,
-        emissive: cfg.coreEmissive,
-        emissiveIntensity: 0.8,
-        metalness: 0.9,
-        roughness: 0.1
-    });
-    group.add(new THREE.Mesh(coreGeo, coreMat));
-
-    // Energy shield sphere (smoother)
-    const shieldGeo = new THREE.SphereGeometry(4, 24, 24);
-    const shieldMat = new THREE.MeshStandardMaterial({
-        color: cfg.shieldColor,
-        emissive: cfg.shieldEmissive,
-        emissiveIntensity: 0.4,
-        transparent: true,
-        opacity: 0.3,
-        metalness: 0.9,
-        roughness: 0.1
-    });
-    group.add(new THREE.Mesh(shieldGeo, shieldMat));
-
-    // Hex wireframe shield overlay
-    const bossWireGeo = new THREE.IcosahedronGeometry(4.2, 1);
-    const bossWireMat = new THREE.MeshBasicMaterial({
-        color: cfg.wireColor,
-        wireframe: true,
-        transparent: true,
-        opacity: 0.12
-    });
-    const bossWireframe = new THREE.Mesh(bossWireGeo, bossWireMat);
-    bossWireframe.userData.isBossShield = true;
-    group.add(bossWireframe);
-
-    // Alternating weapon types: heavy cannons (even) + energy lances (odd)
-    const heavyMountGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-    const heavyBarrelGeo = new THREE.CylinderGeometry(0.15, 0.2, 2.0, 10);
-    const heavyMat = new THREE.MeshStandardMaterial({
-        color: cfg.weaponColor,
-        emissive: cfg.weaponEmissive,
-        emissiveIntensity: 0.5,
-        metalness: 1.0
-    });
-    const lanceGeo = new THREE.ConeGeometry(0.2, 2.5, 8);
-    const lanceMat = new THREE.MeshStandardMaterial({
-        color: cfg.weaponColor,
-        emissive: cfg.lanceEmissive,
-        emissiveIntensity: 0.6,
-        metalness: 1.0
-    });
-    const lanceTipGeo = new THREE.SphereGeometry(0.15, 8, 8);
-    const lanceTipMat = new THREE.MeshBasicMaterial({
-        color: cfg.lanceTipColor,
-        transparent: true,
-        opacity: 0.8
-    });
-
-    for (let i = 0; i < 8; i++) {
-        const angle = (i / 8) * Math.PI * 2;
-        if (i % 2 === 0) {
-            // Heavy cannon
-            const cannon = new THREE.Group();
-            cannon.add(new THREE.Mesh(heavyMountGeo, heavyMat));
-            const barrel = new THREE.Mesh(heavyBarrelGeo, heavyMat);
-            barrel.rotation.z = Math.PI / 2;
-            barrel.position.x = 1.2;
-            cannon.add(barrel);
-            cannon.position.set(Math.cos(angle) * 3.5, Math.sin(angle) * 3.5, 0);
-            cannon.rotation.z = angle;
-            group.add(cannon);
-        } else {
-            // Energy lance
-            const lance = new THREE.Mesh(lanceGeo, lanceMat);
-            lance.position.set(Math.cos(angle) * 3.5, Math.sin(angle) * 3.5, 0);
-            lance.rotation.z = angle + Math.PI / 2;
-            group.add(lance);
-            const tip = new THREE.Mesh(lanceTipGeo, lanceTipMat);
-            tip.position.set(Math.cos(angle) * 4.5, Math.sin(angle) * 4.5, 0);
-            tip.userData.isPulse = true;
-            group.add(tip);
-        }
-    }
-
-    // Layered reactor: outer glow + inner core + energy ring
-    const reactorOuterGeo = new THREE.SphereGeometry(1.5, 24, 24);
-    const reactorOuterMat = new THREE.MeshBasicMaterial({
-        color: cfg.reactorOuter,
-        transparent: true,
-        opacity: 0.4
-    });
-    const reactorOuter = new THREE.Mesh(reactorOuterGeo, reactorOuterMat);
-    reactorOuter.userData.isPulse = true;
-    group.add(reactorOuter);
-
-    const reactorInnerGeo = new THREE.SphereGeometry(0.8, 16, 16);
-    const reactorInnerMat = new THREE.MeshBasicMaterial({
-        color: cfg.reactorInner,
-        transparent: true,
-        opacity: 0.85
-    });
-    const reactorInner = new THREE.Mesh(reactorInnerGeo, reactorInnerMat);
-    reactorInner.userData.isPulse = true;
-    group.add(reactorInner);
-
-    const reactorRingGeo = new THREE.TorusGeometry(1.1, 0.06, 12, 24);
-    const reactorRingMat = new THREE.MeshBasicMaterial({
-        color: cfg.reactorRing,
-        transparent: true,
-        opacity: 0.6
-    });
-    const reactorRing = new THREE.Mesh(reactorRingGeo, reactorRingMat);
-    reactorRing.userData.isRing = true;
-    reactorRing.userData.rotationSpeed = 0.04;
-    group.add(reactorRing);
-
-    // Reactor glow halo
-    const bossGlowGeo = new THREE.SphereGeometry(2.0, 16, 16);
-    const bossGlowMat = new THREE.MeshBasicMaterial({
-        color: cfg.glowColor,
-        transparent: true,
-        opacity: 0.06
-    });
-    group.add(new THREE.Mesh(bossGlowGeo, bossGlowMat));
-
-    // Orbiting armor plates
-    const armorGeo = new THREE.BoxGeometry(1.2, 0.15, 2.5);
-    const armorMat = new THREE.MeshStandardMaterial({
-        color: cfg.armorColor,
-        emissive: cfg.armorEmissive,
-        emissiveIntensity: 0.25,
-        metalness: 0.95,
-        roughness: 0.2
-    });
-    for (let i = 0; i < 4; i++) {
-        const armor = new THREE.Mesh(armorGeo, armorMat);
-        const angle = (i / 4) * Math.PI * 2;
-        armor.position.set(Math.cos(angle) * 2.8, 0, Math.sin(angle) * 2.8);
-        armor.rotation.y = angle;
-        armor.userData.isBossArmor = true;
-        armor.userData.orbitAngle = angle;
-        armor.userData.orbitSpeed = 0.008;
-        group.add(armor);
-    }
-
-    // === Enhancement 1: Orbiting energy particles (aura) ===
-    const auraParticles = [];
-    const auraCount = isMobile ? 12 : 20;
-    for (let i = 0; i < auraCount; i++) {
-        const auraMat = new THREE.MeshBasicMaterial({
-            color: cfg.auraBase,
-            transparent: true,
-            opacity: 0.6
-        });
-        const aura = new THREE.Mesh(SHARED_GEO.bossAuraParticle, auraMat);
-        aura.userData.isBossAura = true;
-        aura.userData.orbitAngle = (i / auraCount) * Math.PI * 2;
-        aura.userData.orbitRadius = 3.5 + Math.random() * 1.5;
-        aura.userData.orbitSpeed = 0.015 + Math.random() * 0.01;
-        aura.userData.orbitTilt = (Math.random() - 0.5) * Math.PI * 0.6;
-        aura.userData.phaseOffset = Math.random() * Math.PI * 2;
-        const r = aura.userData.orbitRadius;
-        aura.position.set(Math.cos(aura.userData.orbitAngle) * r, 0, Math.sin(aura.userData.orbitAngle) * r);
-        auraParticles.push(aura);
-        group.add(aura);
-    }
-
-    // === Enhancement 2: Pulsing energy veins (torus rings on core) ===
-    const veinAngles = [
-        { rx: Math.PI / 4, ry: 0, rz: 0 },
-        { rx: 0, ry: 0, rz: Math.PI / 3 },
-        { rx: -Math.PI / 5, ry: Math.PI / 4, rz: 0 }
-    ];
-    for (let i = 0; i < veinAngles.length; i++) {
-        const veinMat = new THREE.MeshBasicMaterial({
-            color: cfg.veinBase,
-            transparent: true,
-            opacity: 0.3
-        });
-        const vein = new THREE.Mesh(SHARED_GEO.bossEnergyVein, veinMat);
-        vein.rotation.set(veinAngles[i].rx, veinAngles[i].ry, veinAngles[i].rz);
-        vein.userData.isBossVein = true;
-        vein.userData.baseOpacity = 0.3;
-        vein.userData.pulseOffset = i * (Math.PI * 2 / 3);
-        group.add(vein);
-    }
-
-    group.scale.set(cfg.scale, cfg.scale, cfg.scale);
+    const levelStats = LEVEL_BOSS_STATS[currentLevel] || { scale: cfg.scale, baseSpeedMult: 1.0, fireIntervalMult: 1.0 };
+    buildBossMesh(currentLevel, group, cfg);
+    group.scale.set(levelStats.scale, levelStats.scale, levelStats.scale);
 
     // Scale boss health based on difficulty and level
     const baseHealth = Math.min(15 + (currentLevel * 5), 60);
@@ -2134,9 +2436,9 @@ function createBoss() {
     const bossHealth = Math.round(baseHealth * difficultyMultiplier);
 
     const bossSettings = difficultySettings[difficulty];
-    const actBaseSpeed = cfg.baseSpeed;
-    // Apply act fire-rate multiplier on top of difficulty fire interval
-    const actFireInterval = Math.round(bossSettings.bossFireInterval * cfg.fireIntervalMult);
+    const actBaseSpeed = cfg.baseSpeed * levelStats.baseSpeedMult;
+    // Apply act + level fire-rate multipliers on top of difficulty fire interval
+    const actFireInterval = Math.round(bossSettings.bossFireInterval * cfg.fireIntervalMult * levelStats.fireIntervalMult);
     const actBurstPause = Math.round(bossSettings.bossBurstPauseFrames * cfg.fireIntervalMult);
     boss = {
         mesh: group,
@@ -2170,6 +2472,9 @@ function createBoss() {
         minionSpawnInterval: BOSS_MINION_TIMER_INTERVAL,
         canSpawnMinions: getActLevel(currentLevel) >= 3,
         isFinale: isActFinale(currentLevel),
+        // Per-level identity and custom scratch space
+        level: currentLevel,
+        custom: getBossCustomState(currentLevel),
         // Arc visual config (used by animateBossParts)
         actColors: cfg
     };
@@ -2223,7 +2528,7 @@ function updateBossHealthBar() {
 function updateBossPhaseLabel() {
     const label = document.getElementById('bossPhaseLabel');
     if (!label || !boss) return;
-    const bossName = boss.actColors ? boss.actColors.name : 'THE CORE';
+    const bossName = (boss.level && LEVEL_BOSS_NAMES[boss.level]) ? LEVEL_BOSS_NAMES[boss.level] : (boss.actColors ? boss.actColors.name : 'THE CORE');
     label.textContent = `${bossName} \u2014 PHASE ${boss.phase}`;
     label.className = 'boss-phase-label';
     if (boss.phase === 2) label.classList.add('phase-2');
@@ -2235,6 +2540,744 @@ function updateBossHealthBarColor() {
     bossHealthFill.className = 'health-bar-fill';
     if (boss.phase === 2) bossHealthFill.classList.add('phase-2');
     else if (boss.phase === 3) bossHealthFill.classList.add('phase-3');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEFAULT BOSS ATTACK — extracted from original updateBoss() firing block.
+// Called by updateBossAttack() for levels without a custom attack.
+// ─────────────────────────────────────────────────────────────────────────────
+function defaultBossAttack(b) {
+    b.fireTimer--;
+    if (b.fireTimer > 0) return;
+    const bossPos = b.mesh.position;
+    const multiShotSpeed = (0.5 + (currentLevel - 1) * 0.03) * b.bulletSpeedMultiplier;
+    const singleShotSpeed = 0.45 * b.bulletSpeedMultiplier;
+
+    if (b.phase === 3) {
+        for (let s = -2; s <= 2; s++) {
+            createEnemyBullet(bossPos.x, bossPos.y, bossPos.z, player.x + s * 5, player.y, player.z, multiShotSpeed * 1.1);
+        }
+    } else if (b.phase === 2 || difficultySettings[difficulty].bossMultiShot) {
+        for (let s = -1; s <= 1; s++) {
+            createEnemyBullet(bossPos.x, bossPos.y, bossPos.z, player.x + s * 8, player.y, player.z, multiShotSpeed);
+        }
+    } else {
+        createEnemyBullet(bossPos.x, bossPos.y, bossPos.z, player.x, player.y, player.z, singleShotSpeed);
+    }
+    playEnemyShootSound();
+
+    // Muzzle flash
+    const muzzleCount = Math.min(b.phase + 1, 4);
+    for (let m = 0; m < muzzleCount; m++) {
+        const mAngle = (m * 2 / 8) * Math.PI * 2;
+        const muzzleMat = new THREE.MeshBasicMaterial({
+            color: b.phase === 3 ? 0xffaa00 : b.phase === 2 ? 0xff6600 : 0xff3300,
+            transparent: true, opacity: 0.9
+        });
+        const muzzleMesh = new THREE.Mesh(SHARED_GEO.bossMuzzleFlash, muzzleMat);
+        muzzleMesh.position.set(
+            bossPos.x + Math.cos(mAngle + b.mesh.rotation.y) * 7,
+            bossPos.y + Math.sin(mAngle + b.mesh.rotation.y) * 7,
+            bossPos.z
+        );
+        scene.add(muzzleMesh);
+        particles.push({ mesh: muzzleMesh, velocity: new THREE.Vector3(0, 0, 0), life: 5, isFlash: true });
+    }
+
+    if (b.burstShotsRemaining > 1) {
+        b.burstShotsRemaining--;
+        b.fireTimer = b.fireInterval;
+    } else {
+        b.burstShotsRemaining = b.burstShotsPerCycle;
+        b.fireTimer = b.burstPauseFrames;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOSS ATTACK DISPATCH — per-level attack overrides; default for unimplemented.
+// ─────────────────────────────────────────────────────────────────────────────
+function updateBossAttack(b) {
+    switch (b.level) {
+        case 3:  // THE CARRIER — no direct fire; minion spawning in updateBossCustomMechanics
+            return;
+        case 2: {
+            // THE GUNSHIP — fires only when roughly facing player
+            const facing = Math.abs(b.mesh.rotation.y % (Math.PI * 2)) < 0.5 ||
+                           Math.abs((b.mesh.rotation.y % (Math.PI * 2)) - Math.PI * 2) < 0.5;
+            if (!facing) { b.fireTimer = Math.max(b.fireTimer - 1, 1); return; }
+            defaultBossAttack(b);
+            return;
+        }
+        case 13: // THE BERSERKER — rage tier 3 fires radially in updateBossCustomMechanics
+            if (b.custom.rageTier >= 3) return;
+            defaultBossAttack(b);
+            return;
+        case 17: // THE TITAN — cannons handled per-frame in updateBossCustomMechanics
+        case 18: // THE HARBINGER — minion spawns in updateBossCustomMechanics; no regular fire
+            return;
+        case 19: { // THE EMISSARY — fires OVERLOAD ring when triggered by charge accumulation
+            const c19 = b.custom;
+            if (c19.overloadTimer > 0) {
+                c19.overloadTimer = 0;
+                const bp = b.mesh.position;
+                for (let d = 0; d < 12; d++) {
+                    const a = (d / 12) * Math.PI * 2;
+                    createEnemyBullet(bp.x, bp.y, bp.z, bp.x + Math.cos(a) * 10, bp.y, bp.z + Math.sin(a) * 10, 0.45);
+                }
+                playEnemyShootSound();
+            }
+            return; // no timer-based firing
+        }
+        default:
+            defaultBossAttack(b);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOSS CUSTOM MECHANICS DISPATCH — per-level special per-frame logic.
+// ─────────────────────────────────────────────────────────────────────────────
+function updateBossCustomMechanics(b) {
+    const c = b.custom;
+    const bossPos = b.mesh.position;
+
+    switch (b.level) {
+
+        case 1: { // THE PROBE — tracking bullets
+            for (let i = c.trackingBullets.length - 1; i >= 0; i--) {
+                const tb = c.trackingBullets[i];
+                if (!tb.mesh.visible) { c.trackingBullets.splice(i, 1); continue; }
+                // Gently steer toward player each frame
+                const dx = player.x - tb.mesh.position.x;
+                const dz = player.z - tb.mesh.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz) || 1;
+                tb.velocity.x += (dx / dist) * 0.012;
+                tb.velocity.z += (dz / dist) * 0.012;
+                // Clamp speed
+                const spd = Math.sqrt(tb.velocity.x * tb.velocity.x + tb.velocity.z * tb.velocity.z);
+                if (spd > 0.55) { tb.velocity.x *= 0.55 / spd; tb.velocity.z *= 0.55 / spd; }
+            }
+            // Fire one tracking bullet every ~120 frames via boss.fireTimer path already done;
+            // but we tag newly created enemy bullets when probe fires. We do that by hooking
+            // into the default attack — instead we fire manually here and tag.
+            b.fireTimer--;
+            if (b.fireTimer <= 0) {
+                b.fireTimer = b.fireInterval;
+                const spd = 0.3;
+                createEnemyBullet(bossPos.x, bossPos.y, bossPos.z, player.x, player.y, player.z, spd);
+                if (enemyBullets.length > 0) {
+                    c.trackingBullets.push(enemyBullets[enemyBullets.length - 1]);
+                    playEnemyShootSound();
+                }
+            }
+            break;
+        }
+
+        case 2: { // THE GUNSHIP — mine drops
+            c.mineDropTimer++;
+            if (c.mineDropTimer >= 240) {
+                c.mineDropTimer = 0;
+                const mineGeo = new THREE.SphereGeometry(0.55, 8, 8);
+                const mineMat = new THREE.MeshStandardMaterial({ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 1.2 });
+                const mineMesh = new THREE.Mesh(mineGeo, mineMat);
+                mineMesh.position.set(bossPos.x, bossPos.y - 1, bossPos.z);
+                scene.add(mineMesh);
+                c.mines.push({ mesh: mineMesh, life: 600 });
+            }
+            for (let i = c.mines.length - 1; i >= 0; i--) {
+                const m = c.mines[i];
+                m.life--;
+                if (m.life <= 0) { scene.remove(m.mesh); disposeMesh(m.mesh); c.mines.splice(i, 1); continue; }
+                // Pulse
+                const p = Math.sin(Date.now() * 0.006) * 0.2 + 0.8;
+                m.mesh.scale.setScalar(p);
+                // Check player proximity
+                const dx = player.x - m.mesh.position.x, dz = player.z - m.mesh.position.z;
+                if (dx * dx + dz * dz < 9) {
+                    scene.remove(m.mesh); disposeMesh(m.mesh); c.mines.splice(i, 1);
+                    damagePlayer();
+                }
+            }
+            break;
+        }
+
+        case 3: { // THE CARRIER — spawn enemy waves from hangar bays
+            c.hangarTimer++;
+            if (c.hangarTimer >= 180) {
+                c.hangarTimer = 0;
+                spawnBossMinionWave(3, 'arc');
+                // Flash the hangar bays
+                b.mesh.traverse(child => {
+                    if (child.userData.isHangar) {
+                        child.material.emissiveIntensity = 2.5;
+                        setTimeout(() => { if (child.material) child.material.emissiveIntensity = 0.9; }, 300);
+                    }
+                });
+            }
+            break;
+        }
+
+        case 4: { // THE INTERCEPTOR COMMANDER — dash attack
+            if (c.dashing) {
+                c.dashTimer--;
+                b.mesh.position.x += c.dashVelX;
+                b.mesh.position.z += c.dashVelZ;
+                // Damage check during dash
+                const dx = player.x - bossPos.x, dz = player.z - bossPos.z;
+                if (Math.sqrt(dx*dx + dz*dz) < 3.5) { damagePlayer(); c.dashing = false; }
+                if (c.dashTimer <= 0) { c.dashing = false; b.speed = b.baseSpeed; }
+            } else {
+                c.dashCooldown--;
+                if (c.dashCooldown <= 0) {
+                    c.dashCooldown = 120 + Math.floor(Math.random() * 60);
+                    c.dashing = true; c.dashTimer = 25;
+                    const dx = player.x - bossPos.x; const dz = player.z - bossPos.z;
+                    const dist = Math.sqrt(dx*dx + dz*dz) || 1;
+                    c.dashVelX = (dx / dist) * 1.2; c.dashVelZ = (dz / dist) * 1.2;
+                }
+            }
+            break;
+        }
+
+        case 5: { // THE FLAGSHIP — P2 emitters, P3 broadside
+            if (b.phase >= 2 && !c.p2Entered) {
+                c.p2Entered = true;
+                // Emitters are already part of the mesh (buildBossL5 added them)
+                // Track them so we can check them
+                b.mesh.traverse(child => {
+                    if (child.userData.emitterSide !== undefined) {
+                        const idx = child.userData.emitterSide;
+                        if (!c.emitterMeshes) c.emitterMeshes = [null, null];
+                        c.emitterMeshes[idx] = child;
+                    }
+                });
+            }
+            if (b.phase === 3 && c.emittersDestroyed >= 2) {
+                c.broadsideCooldown--;
+                if (c.broadsideCooldown <= 0) {
+                    c.broadsideCooldown = 300;
+                    // Fire broadside wall — 8 bullets with 2-unit gaps
+                    const z = bossPos.z;
+                    for (let i = -4; i <= 4; i++) {
+                        if (i === -1 || i === 0) continue; // safe gap
+                        createEnemyBullet(bossPos.x + i * 4.5, bossPos.y, z, player.x + i * 4.5, player.y, player.z, 0.5);
+                    }
+                    playEnemyShootSound();
+                }
+            }
+            break;
+        }
+
+        case 6: { // THE HARVESTER — circular motion + tractor beam
+            c.circleAngle += 0.008;
+            b.mesh.position.x = Math.cos(c.circleAngle) * 18;
+            b.mesh.position.z = 50 + Math.sin(c.circleAngle * 0.7) * 12;
+            // Tractor beam — pull player toward boss X if close enough
+            const beamDx = Math.abs(player.x - bossPos.x);
+            if (beamDx < 8) {
+                player.velocityX += (bossPos.x - player.x) * 0.004;
+            }
+            break;
+        }
+
+        case 7: { // THE STALKER — cloaking
+            c.cloakTimer--;
+            if (c.cloakState === 'visible' && c.cloakTimer <= 0) {
+                c.cloakState = 'fading'; c.cloakTimer = 30; c.cloakFade = 0;
+            } else if (c.cloakState === 'fading') {
+                c.cloakFade++;
+                const t = c.cloakFade / 30;
+                b.mesh.traverse(child => {
+                    if (child.material && child.material.transparent) child.material.opacity = (1 - t) * (child.userData.isBossShield ? 0.9 : 0.4) + t * 0.05;
+                });
+                if (c.cloakFade >= 30) { c.cloakState = 'cloaked'; c.cloakTimer = 60; b.speed = b.baseSpeed * 2; }
+            } else if (c.cloakState === 'cloaked') {
+                // Random direction changes
+                if (c.cloakTimer % 30 === 0) b.direction *= -1;
+                c.cloakTimer--;
+                if (c.cloakTimer <= 0) { c.cloakState = 'appearing'; c.cloakTimer = 30; c.cloakFade = 0; b.speed = b.baseSpeed; }
+            } else if (c.cloakState === 'appearing') {
+                c.cloakFade++;
+                const t = c.cloakFade / 30;
+                b.mesh.traverse(child => {
+                    if (child.material && child.material.transparent) child.material.opacity = t * (child.userData.isBossShield ? 0.9 : 0.4) + (1-t) * 0.05;
+                });
+                if (c.cloakFade >= 30) {
+                    c.cloakState = 'visible'; c.cloakTimer = 180 + Math.floor(Math.random() * 80);
+                    // Immediate burst on reappear
+                    for (let s = -2; s <= 2; s++) {
+                        createEnemyBullet(bossPos.x, bossPos.y, bossPos.z, player.x + s * 4, player.y, player.z, 0.45);
+                    }
+                    playEnemyShootSound();
+                }
+            }
+            break;
+        }
+
+        case 8: { // THE TURRET GOD — stationary; satellites orbit and fire
+            // Lock position
+            b.mesh.position.x = 0;
+            b.mesh.position.z = Math.max(b.mesh.position.z, 45);
+            // Update satellite positions and fire
+            b.mesh.traverse(child => {
+                if (!child.userData.isBossSatellite) return;
+                const idx = child.userData.satIndex;
+                if (!c.satAlive[idx]) return;
+                child.userData.orbitAngle += 0.012;
+                const a = child.userData.orbitAngle; const h = child.userData.orbitHeight;
+                child.position.set(Math.cos(a) * 8, h, Math.sin(a) * 8);
+                // Individual fire timers
+                c.satFireTimers[idx]--;
+                if (c.satFireTimers[idx] <= 0) {
+                    c.satFireTimers[idx] = 90 + idx * 5;
+                    const wp = new THREE.Vector3(); child.getWorldPosition(wp);
+                    createEnemyBullet(wp.x, wp.y, wp.z, player.x, player.y, player.z, 0.38);
+                    playEnemyShootSound();
+                }
+            });
+            // Phase 3 satellite respawn
+            if (b.phase === 3 && !c.satRespawned) {
+                c.satRespawned = true;
+                c.satAlive.fill(true);
+                b.mesh.traverse(child => { if (child.userData.isBossSatellite) child.visible = true; });
+            }
+            break;
+        }
+
+        case 9: { // THE SPLIT — at 50% HP, split into two halves
+            if (!c.split && b.health <= b.maxHealth * 0.5) {
+                c.split = true;
+                // Create halfB — a simple mesh clone managed here
+                const halfGeo = new THREE.OctahedronGeometry(2.5, 0);
+                const halfMat = new THREE.MeshStandardMaterial({ color: 0x550088, emissive: 0x330055, emissiveIntensity: 0.7, metalness: 0.8, roughness: 0.2 });
+                const halfMesh = new THREE.Mesh(halfGeo, halfMat);
+                halfMesh.position.set(bossPos.x + 6, bossPos.y, bossPos.z);
+                scene.add(halfMesh);
+                c.halfB = { mesh: halfMesh, hp: Math.floor(b.health / 2), maxHp: Math.floor(b.maxHealth / 2), fireTimer: 45, dir: 1, angle: 0 };
+                b.health = Math.floor(b.health / 2);
+                updateBossHealthBar();
+            }
+            if (c.split && c.halfB && c.halfB.hp > 0) {
+                // Orbit opposite of main boss
+                c.halfBAngle += 0.02;
+                const r = 8;
+                c.halfB.mesh.position.x = bossPos.x + Math.cos(c.halfBAngle) * r;
+                c.halfB.mesh.position.z = bossPos.z + Math.sin(c.halfBAngle) * r * 0.5;
+                c.halfB.mesh.rotation.y += 0.03;
+                // Half B fires
+                c.halfB.fireTimer--;
+                if (c.halfB.fireTimer <= 0) {
+                    c.halfB.fireTimer = c.halfBHp > 0 ? 50 : 30;
+                    const hp = c.halfB.mesh.position;
+                    createEnemyBullet(hp.x, hp.y, hp.z, player.x, player.y, player.z, 0.38);
+                    playEnemyShootSound();
+                }
+                // Collision check — player bullets hitting halfB
+                for (let i = bullets.length - 1; i >= 0; i--) {
+                    const pb = bullets[i];
+                    const dx = pb.mesh.position.x - c.halfB.mesh.position.x;
+                    const dy = pb.mesh.position.y - c.halfB.mesh.position.y;
+                    const dz = pb.mesh.position.z - c.halfB.mesh.position.z;
+                    if (dx*dx + dy*dy + dz*dz < 9) {
+                        c.halfB.hp -= pb.damage || 1;
+                        scene.remove(pb.mesh);
+                        bullets.splice(i, 1);
+                        if (c.halfB.hp <= 0) {
+                            scene.remove(c.halfB.mesh); disposeMesh(c.halfB.mesh);
+                            c.halfB.hp = 0; // mark defeated
+                            // Main boss goes berserk
+                            b.speed = b.baseSpeed * 2.5;
+                            b.fireInterval = Math.max(Math.floor(b.fireInterval * 0.5), 10);
+                        }
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+
+        case 10: { // THE HIVE QUEEN — circular motion + egg bombs
+            c.circleAngle += 0.006;
+            b.mesh.position.x = Math.cos(c.circleAngle) * 16;
+            b.mesh.position.z = 50 + Math.sin(c.circleAngle * 0.5) * 10;
+            c.eggTimer--;
+            if (c.eggTimer <= 0 && b.phase >= 2) {
+                c.eggTimer = 280;
+                for (let i = 0; i < 4; i++) {
+                    const ex = (Math.random() - 0.5) * 40;
+                    const eggGeo = new THREE.SphereGeometry(0.6, 8, 8);
+                    const eggMat = new THREE.MeshStandardMaterial({ color: 0x88bb00, emissive: 0x446600, emissiveIntensity: 0.9 });
+                    const eggMesh = new THREE.Mesh(eggGeo, eggMat);
+                    eggMesh.position.set(ex, -5, player.z - 5);
+                    eggMesh.userData.isBossEgg = true; scene.add(eggMesh);
+                    c.eggs.push({ mesh: eggMesh, life: 180 });
+                }
+            }
+            for (let i = c.eggs.length - 1; i >= 0; i--) {
+                const egg = c.eggs[i];
+                egg.life--;
+                if (egg.life <= 0) {
+                    // Hatch — fire burst
+                    for (let s = 0; s < 6; s++) {
+                        const a = (s / 6) * Math.PI * 2;
+                        createEnemyBullet(egg.mesh.position.x, egg.mesh.position.y, egg.mesh.position.z,
+                            egg.mesh.position.x + Math.cos(a) * 10, egg.mesh.position.y, egg.mesh.position.z + Math.sin(a) * 10, 0.3);
+                    }
+                    playEnemyShootSound();
+                    scene.remove(egg.mesh); disposeMesh(egg.mesh); c.eggs.splice(i, 1);
+                }
+                // Player bullet hits egg
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    const pb = bullets[j];
+                    const dx = pb.mesh.position.x - egg.mesh.position.x;
+                    const dz = pb.mesh.position.z - egg.mesh.position.z;
+                    if (dx*dx + dz*dz < 4) {
+                        scene.remove(egg.mesh); disposeMesh(egg.mesh); c.eggs.splice(i, 1);
+                        scene.remove(pb.mesh); bullets.splice(j, 1);
+                        score += 50; updateScore();
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+
+        case 11: { // THE LEVIATHAN — snake head leads, body segments follow
+            // Init segments on first frame
+            if (!c.segmentsInit) {
+                c.segmentsInit = true;
+                const sizes = [2.5, 2.1, 1.8, 1.5, 1.2, 0.95, 0.75];
+                for (let i = 0; i < sizes.length; i++) {
+                    const sg = new THREE.SphereGeometry(sizes[i], 12, 12);
+                    const sm = new THREE.MeshStandardMaterial({ color: 0x335544, emissive: 0x113322, emissiveIntensity: 0.5, metalness: 0.6, roughness: 0.4 });
+                    const seg = new THREE.Mesh(sg, sm);
+                    seg.position.set(bossPos.x, bossPos.y, bossPos.z + (i + 1) * 3);
+                    scene.add(seg); c.segmentMeshes.push(seg);
+                }
+            }
+            // Record head position history
+            c.posHistory.unshift({ x: bossPos.x, y: bossPos.y, z: bossPos.z });
+            if (c.posHistory.length > 80) c.posHistory.pop();
+            // Move segments along history
+            for (let i = 0; i < c.segmentMeshes.length; i++) {
+                const histIdx = Math.min((i + 1) * 10, c.posHistory.length - 1);
+                if (histIdx < c.posHistory.length) {
+                    const hp = c.posHistory[histIdx];
+                    c.segmentMeshes[i].position.set(hp.x, hp.y, hp.z);
+                }
+                // Tail collision damage
+                const dx = player.x - c.segmentMeshes[i].position.x;
+                const dz = player.z - c.segmentMeshes[i].position.z;
+                if (dx*dx + dz*dz < 6.25) damagePlayer();
+            }
+            break;
+        }
+
+        case 12: { // THE PHANTOM — teleport + mirror clone
+            c.teleportTimer--;
+            if (c.teleportTimer <= 0 && !c.teleporting) {
+                c.teleporting = true;
+                b.mesh.visible = false;
+                const newX = (Math.random() - 0.5) * 40;
+                setTimeout(() => {
+                    if (boss) { boss.mesh.position.x = newX; boss.mesh.visible = true; }
+                    c.teleporting = false; c.teleportTimer = 150 + Math.floor(Math.random() * 100);
+                }, 300);
+            }
+            // Mirror clone
+            c.mirrorTimer--;
+            if (c.mirrorTimer <= 0) {
+                c.mirrorTimer = 220 + Math.floor(Math.random() * 80);
+                if (c.mirrorMesh) { scene.remove(c.mirrorMesh); disposeMesh(c.mirrorMesh); }
+                const mGeo = new THREE.IcosahedronGeometry(3, 0);
+                const mMat = new THREE.MeshStandardMaterial({ color: 0xeeeeff, emissive: 0x9999cc, emissiveIntensity: 0.3, transparent: true, opacity: 0.35 });
+                c.mirrorMesh = new THREE.Mesh(mGeo, mMat);
+                c.mirrorMesh.position.set(-bossPos.x, bossPos.y, bossPos.z);
+                scene.add(c.mirrorMesh);
+            }
+            if (c.mirrorMesh) {
+                c.mirrorMesh.position.x = -bossPos.x;
+                c.mirrorMesh.position.z = bossPos.z;
+                c.mirrorMesh.rotation.y += 0.02;
+            }
+            break;
+        }
+
+        case 13: { // THE BERSERKER — rage tier escalation
+            const hpRatio = b.health / b.maxHealth;
+            const thresholds = [0.75, 0.5, 0.25];
+            for (let t = 0; t < thresholds.length; t++) {
+                if (hpRatio <= thresholds[t] && c.rageTier <= t) {
+                    c.rageTier = t + 1;
+                    const speedMults = [0.5, 0.9, 1.8];
+                    b.speed = b.baseSpeed * speedMults[t];
+                    const fireRateMults = [0.85, 0.7, 0.5];
+                    b.fireInterval = Math.max(Math.floor(b.baseFireInterval * fireRateMults[t]), 10);
+                    const colors = [0xcc6600, 0xff4400, 0xff0000];
+                    b.mesh.traverse(child => {
+                        if (child.material && child.userData.isBossShield) child.material.color.setHex(colors[t]);
+                    });
+                }
+            }
+            // Phase 3 (full berserk) — fire in all 8 directions
+            if (c.rageTier >= 3) {
+                b.fireTimer--;
+                if (b.fireTimer <= 0) {
+                    b.fireTimer = b.fireInterval;
+                    for (let d = 0; d < 8; d++) {
+                        const a = (d / 8) * Math.PI * 2;
+                        createEnemyBullet(bossPos.x, bossPos.y, bossPos.z,
+                            bossPos.x + Math.cos(a) * 10, bossPos.y, bossPos.z + Math.sin(a) * 10, 0.4);
+                    }
+                    playEnemyShootSound();
+                }
+                return; // skip defaultBossAttack — handled here
+            }
+            break;
+        }
+
+        case 14: { // THE ARCHITECT — sliding barriers
+            // Boss stays stationary
+            b.mesh.position.x = 0;
+            b.mesh.position.z = Math.max(b.mesh.position.z, 48);
+            c.barrierTimer--;
+            if (c.barrierTimer <= 0) {
+                c.barrierTimer = 260;
+                // Create sliding barrier with random gap position
+                const gapX = (Math.random() - 0.5) * 28;
+                const barGeo = new THREE.BoxGeometry(8, 1.5, 0.6);
+                const barMat = new THREE.MeshStandardMaterial({ color: 0x00ccff, emissive: 0x0088cc, emissiveIntensity: 0.8, transparent: true, opacity: 0.75 });
+                // Left panel
+                const barL = new THREE.Mesh(barGeo, barMat.clone());
+                const barR = new THREE.Mesh(barGeo, barMat.clone());
+                barL.position.set(gapX - 7, -5, player.z - 3);
+                barR.position.set(gapX + 7, -5, player.z - 3);
+                scene.add(barL); scene.add(barR);
+                c.barriers.push({ meshL: barL, meshR: barR, life: 150, gapX });
+            }
+            for (let i = c.barriers.length - 1; i >= 0; i--) {
+                const bar = c.barriers[i];
+                bar.life--;
+                if (bar.life <= 0) {
+                    scene.remove(bar.meshL); disposeMesh(bar.meshL);
+                    scene.remove(bar.meshR); disposeMesh(bar.meshR);
+                    c.barriers.splice(i, 1); continue;
+                }
+                // Slide together as life ticks down
+                const t = 1 - bar.life / 150;
+                const slideOff = 20 * (1 - t);
+                bar.meshL.position.x = bar.gapX - 4 - slideOff;
+                bar.meshR.position.x = bar.gapX + 4 + slideOff;
+                // Player collision
+                const px = player.x;
+                const lRight = bar.meshL.position.x + 4;
+                const rLeft  = bar.meshR.position.x - 4;
+                const pz = player.z;
+                const barZ = bar.meshL.position.z;
+                if (Math.abs(pz - barZ) < 1.5 && (px < lRight || px > rLeft)) damagePlayer();
+            }
+            break;
+        }
+
+        case 15: { // THE MIND — ghost ship + reversing bullets
+            // Ghost ship records player positions with delay
+            c.ghostPositions.push({ x: player.x, y: player.y, z: player.z });
+            if (c.ghostPositions.length > 60) {
+                const gp = c.ghostPositions.shift();
+                if (!c.ghostMesh) {
+                    // Create ghost ship mesh (simple clone silhouette)
+                    const gg = new THREE.ConeGeometry(1.2, 4, 6);
+                    const gm = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xaaaaff, emissiveIntensity: 0.8, transparent: true, opacity: 0.35 });
+                    c.ghostMesh = new THREE.Mesh(gg, gm); scene.add(c.ghostMesh);
+                }
+                c.ghostMesh.position.set(gp.x, gp.y, gp.z);
+                // Ghost fires occasionally
+                c.ghostTimer++;
+                if (c.ghostTimer >= 60) {
+                    c.ghostTimer = 0;
+                    createEnemyBullet(gp.x, gp.y, gp.z, player.x, player.y, player.z, 0.35);
+                    playEnemyShootSound();
+                }
+            }
+            // Shield timer
+            if (c.shieldTimer > 0) {
+                c.shieldTimer--;
+                b.mesh.traverse(child => {
+                    if (child.userData.isBossShield) child.material.opacity = 0.6 + Math.sin(Date.now() * 0.02) * 0.2;
+                });
+            }
+            break;
+        }
+
+        case 16: { // THE WARDEN — flanking obelisks orbit main monolith
+            c.flankerAngle += 0.012;
+            b.mesh.traverse(child => {
+                if (!child.userData.isWardanShield) return;
+                const baseAngle = child.userData.orbitAngle;
+                const a = baseAngle + c.flankerAngle;
+                child.position.set(Math.cos(a) * 6, 0, Math.sin(a) * 1.5);
+            });
+            break;
+        }
+
+        case 17: { // THE TITAN — rotating disc, cannons fire when aimed at player
+            c.discAngle += 0.005;
+            b.mesh.rotation.y = c.discAngle;
+            b.mesh.traverse(child => {
+                if (!child.userData.isBossCannon) return;
+                const idx = child.userData.cannonIndex;
+                c.cannonTimers[idx]--;
+                if (c.cannonTimers[idx] > 0) return;
+                // World position of cannon
+                const wp = new THREE.Vector3(); child.getWorldPosition(wp);
+                // Check if this cannon faces the player (within ~20 degrees)
+                const dx = player.x - wp.x; const dz = player.z - wp.z;
+                const angle = Math.atan2(dx, dz);
+                const cannonWorldAngle = child.userData.orbitAngle + c.discAngle;
+                const angleDiff = Math.abs(((angle - cannonWorldAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+                if (angleDiff < 0.35) {
+                    c.cannonTimers[idx] = 300;
+                    createEnemyBullet(wp.x, wp.y, wp.z, player.x, player.y, player.z, 0.45);
+                    playEnemyShootSound();
+                }
+            });
+            break;
+        }
+
+        case 18: { // THE HARBINGER — ring rotation; immune when not facing player
+            // Ring rotation handled by animateBossParts (isRing flag)
+            // Check face-open: rotation.y mod PI near 0
+            const ry = ((b.mesh.rotation.y % Math.PI) + Math.PI) % Math.PI;
+            c.faceOpen = ry < 0.22 || ry > Math.PI - 0.22;
+            // Spawn minion waves periodically
+            c.waveTimer++;
+            if (c.waveTimer >= 150) {
+                c.waveTimer = 0;
+                spawnBossMinionWave(2, 'arc');
+            }
+            break;
+        }
+
+        case 19: { // THE EMISSARY — figure-8 path + bullet absorption
+            c.t += 0.012;
+            b.mesh.position.x = Math.sin(c.t) * 20;
+            b.mesh.position.z = 50 + Math.sin(c.t * 2) * 12;
+            // Charge ring opacity scales with chargeLevel
+            b.mesh.traverse(child => {
+                if (child.userData.isChargeRing) {
+                    child.material.opacity = Math.min(c.chargeLevel / 12, 1.0) * 0.8;
+                }
+            });
+            // Overload
+            if (c.chargeLevel >= 12) {
+                c.chargeLevel = 0;
+                c.overloadTimer = 1; // signal to attack dispatch
+            }
+            break;
+        }
+
+        case 20: { // THE GATE — gravity wells + shockwave rings + sweep beam
+            // Gravity wells
+            for (let i = c.gravityWells.length - 1; i >= 0; i--) {
+                const gw = c.gravityWells[i];
+                gw.life--;
+                gw.mesh.position.x += gw.vx; gw.mesh.position.z += gw.vz;
+                // Scale-pulse
+                const pScale = 1 + Math.sin(Date.now() * 0.01) * 0.15;
+                gw.mesh.scale.setScalar(pScale);
+                if (gw.life <= 0) { scene.remove(gw.mesh); disposeMesh(gw.mesh); c.gravityWells.splice(i, 1); continue; }
+                // Deflect player bullets toward the well
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    const pb = bullets[j];
+                    const dx = gw.mesh.position.x - pb.mesh.position.x;
+                    const dz = gw.mesh.position.z - pb.mesh.position.z;
+                    const d2 = dx*dx + dz*dz;
+                    if (d2 < 49) {
+                        if (d2 < 4) {
+                            // Absorbed
+                            scene.remove(pb.mesh); bullets.splice(j, 1);
+                        } else {
+                            pb.velocity = pb.velocity || new THREE.Vector3(0, 0, -0.5);
+                            pb.velocity.x += dx * 0.015; pb.velocity.z += dz * 0.015;
+                        }
+                    }
+                }
+            }
+            // Spawn gravity wells periodically in P1/P2
+            if (b.phase <= 2) {
+                if (!c._gwTimer) c._gwTimer = 0;
+                c._gwTimer++;
+                if (c._gwTimer >= 200) {
+                    c._gwTimer = 0;
+                    for (let w = 0; w < 2; w++) {
+                        const gwGeo = new THREE.SphereGeometry(1.2, 12, 12);
+                        const gwMat = new THREE.MeshStandardMaterial({ color: 0x220033, emissive: 0x440055, emissiveIntensity: 0.8, transparent: true, opacity: 0.6 });
+                        const gwMesh = new THREE.Mesh(gwGeo, gwMat);
+                        gwMesh.position.set((Math.random() - 0.5) * 30, -5, player.z + (Math.random() - 0.5) * 10);
+                        scene.add(gwMesh);
+                        c.gravityWells.push({ mesh: gwMesh, life: 300, vx: (Math.random()-0.5)*0.05, vz: 0.04 });
+                    }
+                }
+            }
+            // Shockwave rings in P2+
+            if (b.phase >= 2) {
+                if (!c._ringTimer) c._ringTimer = 0;
+                c._ringTimer++;
+                if (c._ringTimer >= 180) {
+                    c._ringTimer = 0;
+                    const rwGeo = new THREE.TorusGeometry(0.5, 0.2, 8, 24);
+                    const rwMat = new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.75 });
+                    const rwMesh = new THREE.Mesh(rwGeo, rwMat);
+                    rwMesh.position.copy(bossPos); rwMesh.rotation.x = Math.PI / 2; scene.add(rwMesh);
+                    c.ringWaves.push({ mesh: rwMesh, r: 0.5, life: 90 });
+                }
+            }
+            for (let i = c.ringWaves.length - 1; i >= 0; i--) {
+                const rw = c.ringWaves[i];
+                rw.life--; rw.r += 0.45;
+                rw.mesh.scale.setScalar(rw.r);
+                rw.mesh.material.opacity = (rw.life / 90) * 0.75;
+                if (rw.life <= 0) { scene.remove(rw.mesh); disposeMesh(rw.mesh); c.ringWaves.splice(i, 1); continue; }
+                // Player collision with ring
+                const dx = player.x - rw.mesh.position.x; const dz = player.z - rw.mesh.position.z;
+                const dist = Math.sqrt(dx*dx + dz*dz);
+                if (Math.abs(dist - rw.r) < 2.5) damagePlayer();
+            }
+            // P3 sweep beam
+            if (b.phase === 3) {
+                if (!c.beamActive) {
+                    if (!c._beamCooldown) c._beamCooldown = 0;
+                    c._beamCooldown--;
+                    if (c._beamCooldown <= 0) {
+                        c._beamCooldown = 300;
+                        c.beamActive = true; c.beamX = -22; c.beamDir = 1; c.beamTimer = 200;
+                        // Darken scene fog
+                        if (scene.fog) { scene.fog._savedDensity = scene.fog.density; scene.fog.density = 0.025; }
+                        // Create beam mesh
+                        c._beamMesh = new THREE.Mesh(
+                            new THREE.BoxGeometry(3, 30, 0.8),
+                            new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.6 })
+                        );
+                        scene.add(c._beamMesh);
+                    }
+                } else {
+                    c.beamTimer--;
+                    c.beamX += c.beamDir * 0.22;
+                    if (c.beamX > 22 || c.beamX < -22) c.beamDir *= -1;
+                    if (c._beamMesh) c._beamMesh.position.set(c.beamX, -5, player.z - 1);
+                    // Player collision
+                    if (Math.abs(player.x - c.beamX) < 2) damagePlayer();
+                    if (c.beamTimer <= 0) {
+                        c.beamActive = false;
+                        if (c._beamMesh) { scene.remove(c._beamMesh); disposeMesh(c._beamMesh); c._beamMesh = null; }
+                        if (scene.fog && scene.fog._savedDensity !== undefined) { scene.fog.density = scene.fog._savedDensity; }
+                    }
+                }
+            }
+            break;
+        }
+
+        default: break; // no special mechanics for this level
+    }
 }
 
 function updateBoss() {
@@ -2318,76 +3361,8 @@ function updateBoss() {
         }
     }
 
-    // Boss shooting logic
-    boss.fireTimer--;
-    if (boss.fireTimer <= 0) {
-        const bossPos = boss.mesh.position;
-        const multiShotSpeed = (0.5 + (currentLevel - 1) * 0.03) * boss.bulletSpeedMultiplier;
-        const singleShotSpeed = 0.45 * boss.bulletSpeedMultiplier;
-
-        if (boss.phase === 3) {
-            // Phase 3: ring shot pattern — 5 bullets in a spread aimed at player region
-            const spreadAngle = 0.4;
-            for (let s = -2; s <= 2; s++) {
-                createEnemyBullet(
-                    bossPos.x, bossPos.y, bossPos.z,
-                    player.x + s * 5, player.y, player.z,
-                    multiShotSpeed * 1.1
-                );
-            }
-        } else if (boss.phase === 2 || difficultySettings[difficulty].bossMultiShot) {
-            // Phase 2 or medium/hard: 3-bullet spread
-            for (let s = -1; s <= 1; s++) {
-                createEnemyBullet(
-                    bossPos.x, bossPos.y, bossPos.z,
-                    player.x + s * 8, player.y, player.z,
-                    multiShotSpeed
-                );
-            }
-        } else {
-            // Phase 1 easy: single aimed shot
-            createEnemyBullet(
-                bossPos.x, bossPos.y, bossPos.z,
-                player.x, player.y, player.z,
-                singleShotSpeed
-            );
-        }
-        playEnemyShootSound();
-
-        // === Enhancement 8: Cannon muzzle flash on fire ===
-        const muzzleCount = Math.min(boss.phase + 1, 4);
-        for (let m = 0; m < muzzleCount; m++) {
-            const mAngle = (m * 2 / 8) * Math.PI * 2; // Use even-indexed cannon positions
-            const muzzleMat = new THREE.MeshBasicMaterial({
-                color: boss.phase === 3 ? 0xffaa00 : boss.phase === 2 ? 0xff6600 : 0xff3300,
-                transparent: true,
-                opacity: 0.9
-            });
-            const muzzleMesh = new THREE.Mesh(SHARED_GEO.bossMuzzleFlash, muzzleMat);
-            // Position at cannon tip in world space
-            muzzleMesh.position.set(
-                bossPos.x + Math.cos(mAngle + boss.mesh.rotation.y) * 7,
-                bossPos.y + Math.sin(mAngle + boss.mesh.rotation.y) * 7,
-                bossPos.z
-            );
-            scene.add(muzzleMesh);
-            particles.push({
-                mesh: muzzleMesh,
-                velocity: new THREE.Vector3(0, 0, 0),
-                life: 5,
-                isFlash: true
-            });
-        }
-
-        if (boss.burstShotsRemaining > 1) {
-            boss.burstShotsRemaining--;
-            boss.fireTimer = boss.fireInterval;
-        } else {
-            // Give the player a brief counter-attack window between burst cycles.
-            boss.burstShotsRemaining = boss.burstShotsPerCycle;
-            boss.fireTimer = boss.burstPauseFrames;
-        }
-    }
+    updateBossCustomMechanics(boss);
+    updateBossAttack(boss);
 
     // Check if boss reached player (game over)
     if (boss.mesh.position.z < -10) {
@@ -2550,6 +3525,30 @@ function checkBossCollision() {
                 bullets.splice(bIndex, 1);
             }
 
+            // Level-specific immunity / absorption
+            if (boss.level === 18 && !boss.custom.faceOpen) {
+                // THE HARBINGER: immune unless ring face is pointed toward player
+                continue;
+            }
+            if (boss.level === 16) {
+                // THE WARDEN: vulnerable only during flanker gap window
+                const va = ((boss.custom.flankerAngle || 0) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+                if (!(va > Math.PI * 0.6 && va < Math.PI * 1.4)) continue;
+            }
+            if (boss.level === 19) {
+                // THE EMISSARY: absorbs player bullets to build charge
+                boss.custom.chargeLevel++;
+                // Fire a 5-shot burst every 3 absorptions (before overload)
+                if (boss.custom.chargeLevel % 3 === 0 && boss.custom.chargeLevel < 12) {
+                    const bp = boss.mesh.position;
+                    for (let s = -2; s <= 2; s++) {
+                        createEnemyBullet(bp.x, bp.y, bp.z, player.x + s * 4.5, player.y, player.z, 0.42);
+                    }
+                    playEnemyShootSound();
+                }
+                continue; // no health damage from absorbed bullets
+            }
+
             boss.health -= (bullet.damage || 1);
             updateBossHealthBar();
 
@@ -2631,8 +3630,39 @@ function checkBossCollision() {
     }
 }
 
+// Dispose any scene objects created by boss.custom mechanics (barriers, mines, satellites, etc.)
+function cleanupBossCustom(b) {
+    if (!b || !b.custom) return;
+    const c = b.custom;
+    const rm = (mesh) => { if (mesh) { scene.remove(mesh); disposeMesh(mesh); } };
+    // L2 mines
+    if (c.mines) { c.mines.forEach(m => rm(m.mesh)); c.mines = []; }
+    // L9 halfB
+    if (c.halfB && c.halfB.mesh) { rm(c.halfB.mesh); c.halfB = null; }
+    // L10 eggs
+    if (c.eggs) { c.eggs.forEach(e => rm(e.mesh)); c.eggs = []; }
+    // L11 body segments
+    if (c.segmentMeshes) { c.segmentMeshes.forEach(s => rm(s)); c.segmentMeshes = []; }
+    // L12 mirror clone
+    if (c.mirrorMesh) { rm(c.mirrorMesh); c.mirrorMesh = null; }
+    // L14 barriers
+    if (c.barriers) { c.barriers.forEach(bar => { rm(bar.meshL); rm(bar.meshR); }); c.barriers = []; }
+    // L15 ghost ship
+    if (c.ghostMesh) { rm(c.ghostMesh); c.ghostMesh = null; }
+    // L20 gravity wells, ring waves, sweep beam
+    if (c.gravityWells) { c.gravityWells.forEach(gw => rm(gw.mesh)); c.gravityWells = []; }
+    if (c.ringWaves) { c.ringWaves.forEach(rw => rm(rw.mesh)); c.ringWaves = []; }
+    if (c._beamMesh) { rm(c._beamMesh); c._beamMesh = null; }
+    // Restore fog if darkened by L20
+    if (scene.fog && scene.fog._savedDensity !== undefined) {
+        scene.fog.density = scene.fog._savedDensity;
+        delete scene.fog._savedDensity;
+    }
+}
+
 function defeatBoss() {
     if (!boss) return;
+    cleanupBossCustom(boss);
 
     // Clean up boss visual enhancement particles
     if (boss.afterimages) {
@@ -2925,6 +3955,7 @@ function escapeBoss() {
 
 function finishBossEscape() {
     if (!boss) return;
+    cleanupBossCustom(boss);
 
     // Warp flash at boss position
     const flashMaterial = new THREE.MeshBasicMaterial({
@@ -4978,6 +6009,12 @@ async function endGame() {
     gameDifficultyElement.textContent = difficulty.toUpperCase();
     const gameOverLevelEl = document.getElementById('gameOverLevel');
     if (gameOverLevelEl) gameOverLevelEl.textContent = currentLevel;
+    const continueLevelSpan = document.getElementById('continueLevel');
+    const continueBtn = document.getElementById('continueBtn');
+    if (continueBtn && continueLevelSpan) {
+        continueLevelSpan.textContent = currentLevel;
+        continueBtn.classList.toggle('hidden', currentLevel <= 1);
+    }
     latestGameSummary = {
         score,
         difficulty,
@@ -5063,7 +6100,7 @@ function displayHighScores(scores) {
 }
 
 // Start Game
-function startGame() {
+function startGame(fromLevel = 1) {
     // Clean up previous game — dispose GPU resources
     bullets.forEach(b => { scene.remove(b.mesh); }); // shared geo+mat — no dispose
     enemies.forEach(e => { disposeMesh(e.mesh); scene.remove(e.mesh); });
@@ -5108,9 +6145,9 @@ function startGame() {
     score = 0;
     lives = 3;
     targetsHit = 0;
-    currentLevel = 1;
+    currentLevel = fromLevel;
     enemiesDefeatedThisLevel = 0;
-    enemiesRequiredForBoss = 10;
+    enemiesRequiredForBoss = 10 + fromLevel * 2;
     bossActive = false;
     boss = null;
     levelTransitioning = true;  // Start with transition active during level message
@@ -5121,8 +6158,8 @@ function startGame() {
     bossHealthBar.classList.add('hidden');
     bossHealthFill.className = 'health-bar-fill'; // Reset phase color
 
-    // Load level 1 theme
-    loadLevelTheme(1);
+    // Load starting level theme
+    loadLevelTheme(fromLevel);
 
     player.x = 0;
     player.y = -5;
@@ -5158,7 +6195,7 @@ function startGame() {
     gameOverScreen.classList.add('hidden');
     document.getElementById('pauseScreen').classList.add('hidden');
 
-    showLevelMessage(1);
+    showLevelMessage(fromLevel);
 
     // Allow enemy spawning after level message disappears
     levelTransitionTimeout = setTimeout(() => {
