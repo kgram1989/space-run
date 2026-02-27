@@ -2467,7 +2467,7 @@ function createBoss() {
         // Escape & minion system
         escaping: false,
         escapeTimer: 0,
-        canEscape: !isActFinale(currentLevel),
+        canEscape: false, // Each level has a unique boss — no escape; always fight to defeat
         minionSpawnTimer: 0,
         minionSpawnInterval: BOSS_MINION_TIMER_INTERVAL,
         canSpawnMinions: getActLevel(currentLevel) >= 3,
@@ -3515,6 +3515,55 @@ function checkBossCollision() {
         const bullet = bullets[bIndex];
         const bulletPos = bullet.mesh.position;
 
+        // L8 — THE TURRET GOD: bullet can hit individual satellite pods
+        if (boss.level === 8) {
+            let satHit = false;
+            boss.mesh.traverse(child => {
+                if (satHit || !child.userData.isBossSatellite) return;
+                const idx = child.userData.satIndex;
+                if (!boss.custom.satAlive[idx]) return;
+                const wp = new THREE.Vector3();
+                child.getWorldPosition(wp);
+                const sdx = bulletPos.x - wp.x, sdy = bulletPos.y - wp.y, sdz = bulletPos.z - wp.z;
+                if (sdx*sdx + sdy*sdy + sdz*sdz < 2.5) {
+                    satHit = true;
+                    boss.custom.satAlive[idx] = false;
+                    child.visible = false;
+                    scene.remove(bullet.mesh);
+                    bullets.splice(bIndex, 1);
+                    playBossHitSound();
+                    score += 25; updateScore();
+                }
+            });
+            if (satHit) continue;
+        }
+
+        // L5 — THE FLAGSHIP: in phase 2+ bullets can destroy shield emitters
+        if (boss.level === 5 && boss.phase >= 2) {
+            let emHit = false;
+            boss.mesh.traverse(child => {
+                if (emHit || child.userData.emitterSide === undefined) return;
+                const idx = child.userData.emitterSide;
+                if (boss.custom.emitterHp[idx] <= 0) return;
+                const wp = new THREE.Vector3();
+                child.getWorldPosition(wp);
+                const edx = bulletPos.x - wp.x, edy = bulletPos.y - wp.y, edz = bulletPos.z - wp.z;
+                if (edx*edx + edy*edy + edz*edz < 3.5) {
+                    emHit = true;
+                    boss.custom.emitterHp[idx]--;
+                    playBossHitSound();
+                    if (boss.custom.emitterHp[idx] <= 0) {
+                        boss.custom.emittersDestroyed++;
+                        child.visible = false;
+                    } else {
+                        child.material.emissiveIntensity = boss.custom.emitterHp[idx] * 0.4 + 0.2;
+                    }
+                    if (!bullet.piercing) { scene.remove(bullet.mesh); bullets.splice(bIndex, 1); }
+                }
+            });
+            if (emHit) continue;
+        }
+
         const distance = bulletPos.distanceTo(bossPos);
 
         if (distance < 4.5) {  // Boss hit radius
@@ -3759,6 +3808,15 @@ function defeatBoss() {
     bullets = [];
     enemyBullets.forEach(b => { b.mesh.visible = false; }); // return to pool
     enemyBullets = [];
+
+    // L3 THE CARRIER — defeating it clears ALL enemies from the field
+    if (currentLevel === 3) {
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            disposeMesh(enemies[i].mesh);
+            scene.remove(enemies[i].mesh);
+        }
+        enemies = [];
+    }
 
     // Clean up boss minions
     for (let i = enemies.length - 1; i >= 0; i--) {
@@ -5991,6 +6049,7 @@ async function endGame() {
 
     // Clean up boss visual enhancement particles if boss still exists
     if (boss) {
+        cleanupBossCustom(boss); // dispose mines, segments, barriers, ghost, beam, etc.
         if (boss.afterimages) {
             boss.afterimages.forEach(ai => { ai.mesh.material.dispose(); scene.remove(ai.mesh); });
             boss.afterimages = [];
