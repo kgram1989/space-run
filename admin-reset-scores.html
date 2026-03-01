@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Space Run — Admin: Reset High Scores</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #0f0; padding: 24px; }
+    h1 { color: #ff4400; }
+    #log { background: #000; border: 1px solid #333; padding: 16px; white-space: pre; max-height: 500px; overflow-y: auto; }
+    button { margin: 8px 4px; padding: 10px 20px; font-family: monospace; font-size: 14px; cursor: pointer; }
+    #btnReset { background: #c00; color: #fff; border: none; }
+    #btnRead  { background: #040; color: #0f0; border: 1px solid #0f0; }
+    .warn { color: #ff0; }
+    .ok   { color: #0f0; }
+    .err  { color: #f00; }
+  </style>
+</head>
+<body>
+  <h1>Space Run — Admin: Reset High Scores</h1>
+  <p>
+    This utility connects to Firebase and resets the leaderboard,
+    keeping only the 3rd-highest score that belongs to <strong>Cruz Kumaru</strong>.
+  </p>
+  <button id="btnRead">1. Read current scores</button>
+  <button id="btnReset" disabled>2. Reset (keep Cruz Kumaru #3 only)</button>
+  <div id="log">Waiting…</div>
+
+  <!-- Firebase compat SDK (same version as the game) -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyARY6XkSmmu8DsTgKwDHqoWrOXlwd3pvB4",
+      authDomain: "space-run-6c91e.firebaseapp.com",
+      databaseURL: "https://space-run-6c91e-default-rtdb.firebaseio.com",
+      projectId: "space-run-6c91e",
+      storageBucket: "space-run-6c91e.firebasestorage.app",
+      messagingSenderId: "676180652992",
+      appId: "1:676180652992:web:ab390e1b520ccd13da4e25"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const logEl    = document.getElementById('log');
+    const btnRead  = document.getElementById('btnRead');
+    const btnReset = document.getElementById('btnReset');
+
+    function log(msg, cls = '') {
+      const line = cls ? `<span class="${cls}">${msg}</span>` : msg;
+      logEl.innerHTML += line + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Stores raw Firebase entries after the first read
+    let allEntries = [];   // [{ key, val }]
+    let keepEntry  = null; // the entry to preserve
+
+    btnRead.addEventListener('click', async () => {
+      logEl.innerHTML = '';
+      btnReset.disabled = true;
+      allEntries = [];
+      keepEntry  = null;
+
+      log('Reading /highScores from Firebase…');
+      try {
+        const snap = await db.ref('highScores').once('value');
+        if (!snap.exists()) {
+          log('No scores found.', 'warn');
+          return;
+        }
+
+        snap.forEach(child => {
+          allEntries.push({ key: child.key, val: child.val() });
+        });
+
+        // Sort all entries descending by score
+        allEntries.sort((a, b) => b.val.score - a.val.score);
+
+        log(`\nFound ${allEntries.length} score(s):\n`);
+        allEntries.forEach((e, i) => {
+          const v = e.val;
+          log(`  #${i + 1}  ${String(v.name).padEnd(22)} score=${v.score}  diff=${v.difficulty}  date=${v.date}  key=${e.key}`);
+        });
+
+        // Find the entry that is Cruz Kumaru's score at overall rank 3
+        // Interpretation: among all scores sorted desc, the 3rd entry is Cruz Kumaru's.
+        // If the 3rd entry does not belong to Cruz Kumaru, search for Cruz Kumaru's
+        // score that sits at rank 3 among Cruz Kumaru's own scores (i.e. his 3rd highest).
+
+        // Primary: rank-3 overall entry that matches Cruz Kumaru
+        if (allEntries.length >= 3 && allEntries[2].val.name === 'Cruz Kumaru') {
+          keepEntry = allEntries[2];
+          log(`\n✔ Overall rank-3 entry IS Cruz Kumaru — will keep:`, 'ok');
+        } else {
+          // Fallback: find Cruz Kumaru's 3rd-highest score
+          const cruzEntries = allEntries.filter(e => e.val.name === 'Cruz Kumaru');
+          if (cruzEntries.length >= 3) {
+            keepEntry = cruzEntries[2]; // already sorted desc
+            log(`\n⚠ Overall rank-3 is not Cruz Kumaru. Using Cruz Kumaru's 3rd-highest instead:`, 'warn');
+          } else if (cruzEntries.length > 0) {
+            keepEntry = cruzEntries[cruzEntries.length - 1];
+            log(`\n⚠ Cruz Kumaru has fewer than 3 scores. Keeping his lowest available score:`, 'warn');
+          } else {
+            log('\n✘ No scores found for "Cruz Kumaru". Cannot proceed.', 'err');
+            return;
+          }
+        }
+
+        const kv = keepEntry.val;
+        log(`  name=${kv.name}  score=${kv.score}  diff=${kv.difficulty}  date=${kv.date}  key=${keepEntry.key}`, 'ok');
+        log(`\n${allEntries.length - 1} other entries will be DELETED.`, 'warn');
+        log('\nClick "Reset" to apply the changes.');
+        btnReset.disabled = false;
+
+      } catch (err) {
+        log('ERROR: ' + err.message, 'err');
+      }
+    });
+
+    btnReset.addEventListener('click', async () => {
+      if (!keepEntry) { log('Nothing to do.', 'warn'); return; }
+      btnReset.disabled = true;
+      btnRead.disabled  = true;
+
+      const toDelete = allEntries.filter(e => e.key !== keepEntry.key);
+      log(`\nDeleting ${toDelete.length} entries…`);
+
+      try {
+        const updates = {};
+        toDelete.forEach(e => { updates[e.key] = null; });
+        await db.ref('highScores').update(updates);
+        log('Done. Deleted entries: ' + toDelete.map(e => e.key).join(', '), 'ok');
+
+        // Verify
+        log('\nVerifying remaining scores…');
+        const snap = await db.ref('highScores').once('value');
+        if (!snap.exists()) {
+          log('Firebase returned empty — unexpected!', 'err');
+        } else {
+          const remaining = [];
+          snap.forEach(c => remaining.push(c.val()));
+          remaining.sort((a, b) => b.score - a.score);
+          log(`Remaining ${remaining.length} score(s):`);
+          remaining.forEach((v, i) => {
+            log(`  #${i + 1}  ${String(v.name).padEnd(22)} score=${v.score}`, 'ok');
+          });
+        }
+        log('\n✔ Reset complete!', 'ok');
+      } catch (err) {
+        log('ERROR during deletion: ' + err.message, 'err');
+        btnRead.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
