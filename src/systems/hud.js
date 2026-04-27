@@ -29,7 +29,7 @@ export function updateLives() {
         import('../entities/player.js').then(m => m.restoreShield());
         if (!player.invulnerable) {
             player.invulnerable = true;
-            player.invulnerableTimer = 90;
+            player.invulnerableTimer = 1500;
         }
     }
 }

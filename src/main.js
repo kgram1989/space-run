@@ -256,17 +256,22 @@ function gameLoop(timestamp = 0) {
 
     const timers = gameState.timers;
 
-    // Delta time in ms
-    const dt = timers.lastTimestamp ? Math.min(timestamp - timers.lastTimestamp, 50) : 16;
+    // Delta time in ms; raw value used to detect returning from pause
+    const rawDt = timers.lastTimestamp ? timestamp - timers.lastTimestamp : 16;
+    const dt = Math.min(rawDt, 50);
     timers.lastTimestamp = timestamp;
+
+    // Large gap means we returned from pause or tab switch — reset spawn timer
+    // so enemies don't burst-spawn all at once on resume
+    if (rawDt > 200) timers.lastEnemySpawn = timestamp;
 
     if (!gameState.entities.portalAnimating) {
         movePlayer();
         updateBullets();
-        updateEnemies();
+        updateEnemies(dt);
         updateEnemyBullets();
-        updateShield();
-        updatePickups();
+        updateShield(dt);
+        updatePickups(dt);
 
         timers.engineParticleAccum += dt;
         if (timers.engineParticleAccum >= ENGINE_PARTICLE_INTERVAL_MS) {
@@ -289,7 +294,7 @@ function gameLoop(timestamp = 0) {
 
     const { bossActive } = gameState.progression;
     if (bossActive) {
-        updateBoss();
+        updateBoss(dt);
         checkBossCollision();
         checkCollisions();
     } else {

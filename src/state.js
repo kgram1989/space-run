@@ -153,14 +153,14 @@ export let latestGameSummary = {
 // Timing / level constants
 export const PORTAL_SPAWN_DELAY = 1500;
 export const BOSS_PHASE_THRESHOLDS = [0.6, 0.3];
-export const BOSS_PHASE_TRANSITION_FRAMES = 90;
+export const BOSS_PHASE_TRANSITION_MS = 1500;
 export const LEVEL_MESSAGE_DURATION = 2500;
 export const LEVEL_MESSAGE_FADE_TIME = 500;
 export const LEVEL_MESSAGE_TOTAL_TIME = 3000;
 
 // Boss escape & minion system
 export const BOSS_ESCAPE_THRESHOLD = 0.15;
-export const BOSS_MINION_TIMER_INTERVAL = 600;
+export const BOSS_MINION_TIMER_INTERVAL = 10000;
 export const ACT_FINALE_LEVELS = [5, 10, 15, 20];
 
 export const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -175,12 +175,12 @@ export const difficultySettings = {
         bossBonusMultiplier: 0.8,
         minSpawnInterval: 1200,
         scalingFactor: 0.20,
-        enemyFireInterval: { min: 180, max: 300 },
-        bossFireInterval: 60,
+        enemyFireInterval: { min: 3000, max: 5000 },
+        bossFireInterval: 1000,
         bossMultiShot: false,
         bossBulletSpeedMultiplier: 1.0,
         bossBurstShots: 2,
-        bossBurstPauseFrames: 24
+        bossBurstPauseMs: 400
     },
     medium: {
         enemySpeed: { min: 0.16, max: 0.28 },
@@ -190,12 +190,12 @@ export const difficultySettings = {
         bossBonusMultiplier: 1.0,
         minSpawnInterval: 800,
         scalingFactor: 0.25,
-        enemyFireInterval: { min: 120, max: 240 },
-        bossFireInterval: 40,
+        enemyFireInterval: { min: 2000, max: 4000 },
+        bossFireInterval: 667,
         bossMultiShot: true,
         bossBulletSpeedMultiplier: 1.0,
         bossBurstShots: 2,
-        bossBurstPauseFrames: 36
+        bossBurstPauseMs: 600
     },
     hard: {
         enemySpeed: { min: 0.28, max: 0.44 },
@@ -205,12 +205,12 @@ export const difficultySettings = {
         bossBonusMultiplier: 1.5,
         minSpawnInterval: 700,
         scalingFactor: 0.28,
-        enemyFireInterval: { min: 60, max: 150 },
-        bossFireInterval: 32,
+        enemyFireInterval: { min: 1000, max: 2500 },
+        bossFireInterval: 533,
         bossMultiShot: true,
         bossBulletSpeedMultiplier: 0.88,
         bossBurstShots: 2,
-        bossBurstPauseFrames: 72
+        bossBurstPauseMs: 1200
     }
 };
 

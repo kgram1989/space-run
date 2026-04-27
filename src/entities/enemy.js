@@ -294,7 +294,7 @@ export function createEnemy(type) {
         lateralDirection: Math.random() < 0.5 ? -1 : 1,
         waveOffset: Math.random() * Math.PI * 2,
         waveAmplitude: 0.5 + Math.random() * 1.0,
-        fireTimer: Math.floor(Math.random() * 120) + 60,
+        fireTimer: Math.floor(Math.random() * 2000) + 1000,
         fireInterval: settings.enemyFireInterval.min +
             Math.floor(Math.random() * (settings.enemyFireInterval.max - settings.enemyFireInterval.min)),
         dashCooldown: type === 1 ? (90 + Math.floor(Math.random() * 120)) : 0,
@@ -364,7 +364,7 @@ export function animateEnemyParts(enemy) {
     }
 }
 
-export function updateEnemies() {
+export function updateEnemies(dt) {
     const enemies = gameState.entities.enemies;
     const currentLevel = gameState.progression.currentLevel;
     const { difficulty } = gameState.runtime;
@@ -445,10 +445,10 @@ export function updateEnemies() {
         animateEnemyParts(enemy);
 
         if (enemy.mesh.position.z > player.z && enemy.mesh.position.z < 65) {
-            enemy.fireTimer--;
+            enemy.fireTimer -= dt;
 
-            if (enemy.fireTimer <= 15 && enemy.fireTimer > 0) {
-                const chargeProgress = 1 - (enemy.fireTimer / 15);
+            if (enemy.fireTimer <= 250 && enemy.fireTimer > 0) {
+                const chargeProgress = 1 - (enemy.fireTimer / 250);
                 const chargeParts = enemy.cached.pulses;
                 const chargeTips = enemy.cached.turretTips;
                 for (let ci = 0; ci < chargeParts.length; ci++) {

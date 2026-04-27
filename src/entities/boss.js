@@ -1,6 +1,6 @@
 import {
     gameState, player, isMobile, difficultySettings, disposeMesh,
-    SHARED_GEO, BOSS_PHASE_THRESHOLDS, BOSS_PHASE_TRANSITION_FRAMES,
+    SHARED_GEO, BOSS_PHASE_THRESHOLDS, BOSS_PHASE_TRANSITION_MS,
     BOSS_MINION_TIMER_INTERVAL, BOSS_ESCAPE_THRESHOLD, PORTAL_SPAWN_DELAY
 } from '../state.js';
 import { scene } from '../rendering/scene.js';
@@ -34,7 +34,7 @@ export function createBoss() {
     const bossSettings = difficultySettings[difficulty];
     const actBaseSpeed = cfg.baseSpeed * levelStats.baseSpeedMult;
     const actFireInterval = Math.round(bossSettings.bossFireInterval * cfg.fireIntervalMult * levelStats.fireIntervalMult);
-    const actBurstPause = Math.round(bossSettings.bossBurstPauseFrames * cfg.fireIntervalMult);
+    const actBurstPause = Math.round(bossSettings.bossBurstPauseMs * cfg.fireIntervalMult);
 
     const boss = {
         mesh: group,
@@ -42,17 +42,17 @@ export function createBoss() {
         maxHealth: bossHealth,
         speed: actBaseSpeed,
         direction: 1,
-        fireTimer: 60,
+        fireTimer: 1000,
         fireInterval: actFireInterval,
         burstShotsPerCycle: bossSettings.bossBurstShots,
         burstShotsRemaining: bossSettings.bossBurstShots,
-        burstPauseFrames: actBurstPause,
+        burstPauseMs: actBurstPause,
         bulletSpeedMultiplier: bossSettings.bossBulletSpeedMultiplier,
         phase: 1,
         phaseTransitioning: false,
         phaseTransitionTimer: 0,
         baseFireInterval: actFireInterval,
-        baseBurstPauseFrames: actBurstPause,
+        baseBurstPauseMs: actBurstPause,
         baseSpeed: actBaseSpeed,
         afterimages: [],
         afterimageTimer: 0,
@@ -136,10 +136,10 @@ export function updateBossHealthBarColor() {
     else if (boss.phase === 3) bossHealthFill.classList.add('phase-3');
 }
 
-export function defaultBossAttack(b) {
+export function defaultBossAttack(b, dt) {
     const currentLevel = gameState.progression.currentLevel;
     const { difficulty } = gameState.runtime;
-    b.fireTimer--;
+    b.fireTimer -= dt;
     if (b.fireTimer > 0) return;
     const bossPos = b.mesh.position;
     const multiShotSpeed = (0.5 + (currentLevel - 1) * 0.03) * b.bulletSpeedMultiplier;
@@ -181,18 +181,18 @@ export function defaultBossAttack(b) {
         b.fireTimer = b.fireInterval;
     } else {
         b.burstShotsRemaining = b.burstShotsPerCycle;
-        b.fireTimer = b.burstPauseFrames;
+        b.fireTimer = b.burstPauseMs;
     }
 }
 
-export function updateBossAttack(b) {
+export function updateBossAttack(b, dt) {
     switch (b.level) {
         case 3: return;
         case 2: {
             const facing = Math.abs(b.mesh.rotation.y % (Math.PI * 2)) < 0.5 ||
                            Math.abs((b.mesh.rotation.y % (Math.PI * 2)) - Math.PI * 2) < 0.5;
-            if (!facing) { b.fireTimer = Math.max(b.fireTimer - 1, 1); return; }
-            defaultBossAttack(b); return;
+            if (!facing) { b.fireTimer = Math.max(b.fireTimer - dt, 0); return; }
+            defaultBossAttack(b, dt); return;
         }
         case 13:
             if (b.custom.rageTier >= 3) return;
@@ -212,7 +212,7 @@ export function updateBossAttack(b) {
             }
             return;
         }
-        default: defaultBossAttack(b);
+        default: defaultBossAttack(b, dt);
     }
 }
 
@@ -403,7 +403,7 @@ export function updateBossCustomMechanics(b) {
                 const halfMesh = new THREE.Mesh(halfGeo, halfMat);
                 halfMesh.position.set(bossPos.x + 6, bossPos.y, bossPos.z);
                 scene.add(halfMesh);
-                c.halfB = { mesh: halfMesh, hp: Math.floor(b.health / 2), maxHp: Math.floor(b.maxHealth / 2), fireTimer: 45, dir: 1, angle: 0 };
+                c.halfB = { mesh: halfMesh, hp: Math.floor(b.health / 2), maxHp: Math.floor(b.maxHealth / 2), fireTimer: 750, dir: 1, angle: 0 };
                 b.health = Math.floor(b.health / 2);
                 updateBossHealthBar();
             }
@@ -413,9 +413,9 @@ export function updateBossCustomMechanics(b) {
                 c.halfB.mesh.position.x = bossPos.x + Math.cos(c.halfBAngle) * r;
                 c.halfB.mesh.position.z = bossPos.z + Math.sin(c.halfBAngle) * r * 0.5;
                 c.halfB.mesh.rotation.y += 0.03;
-                c.halfB.fireTimer--;
+                c.halfB.fireTimer -= dt;
                 if (c.halfB.fireTimer <= 0) {
-                    c.halfB.fireTimer = c.halfBHp > 0 ? 50 : 30;
+                    c.halfB.fireTimer = c.halfBHp > 0 ? 833 : 500;
                     const hp = c.halfB.mesh.position;
                     createEnemyBullet(hp.x, hp.y, hp.z, player.x, player.y, player.z, 0.38);
                     playEnemyShootSound();
@@ -433,7 +433,7 @@ export function updateBossCustomMechanics(b) {
                             scene.remove(c.halfB.mesh); disposeMesh(c.halfB.mesh);
                             c.halfB.hp = 0;
                             b.speed = b.baseSpeed * 2.5;
-                            b.fireInterval = Math.max(Math.floor(b.fireInterval * 0.5), 10);
+                            b.fireInterval = Math.max(Math.floor(b.fireInterval * 0.5), 167);
                         }
                         break;
                     }
@@ -781,13 +781,13 @@ export function updateBossCustomMechanics(b) {
     }
 }
 
-export function updateBoss() {
+export function updateBoss(dt) {
     const boss = gameState.entities.boss;
     if (!boss) return;
     const currentLevel = gameState.progression.currentLevel;
 
     if (boss.escaping) {
-        boss.escapeTimer--;
+        boss.escapeTimer -= dt;
         boss.mesh.position.z += 0.8;
         boss.mesh.rotation.y += 0.05;
         const c = boss.cached;
@@ -804,8 +804,8 @@ export function updateBoss() {
     }
 
     if (boss.phaseTransitioning) {
-        boss.phaseTransitionTimer--;
-        const pulseAlpha = Math.sin(boss.phaseTransitionTimer * 0.3) * 0.5 + 0.5;
+        boss.phaseTransitionTimer -= dt;
+        const pulseAlpha = Math.sin(boss.phaseTransitionTimer * 0.018) * 0.5 + 0.5;
         const c = boss.cached;
         for (let i = 0; i < c.shields.length; i++) {
             c.shields[i].material.opacity = 0.2 + pulseAlpha * 0.4;
@@ -832,7 +832,7 @@ export function updateBoss() {
     animateBossParts();
 
     if (boss.isFinale && boss.canSpawnMinions) {
-        boss.minionSpawnTimer++;
+        boss.minionSpawnTimer += dt;
         const interval = (boss.health / boss.maxHealth < 0.25)
             ? Math.round(boss.minionSpawnInterval * 0.8)
             : boss.minionSpawnInterval;
@@ -844,7 +844,7 @@ export function updateBoss() {
     }
 
     updateBossCustomMechanics(boss);
-    updateBossAttack(boss);
+    updateBossAttack(boss, dt);
 
     if (boss.mesh.position.z < -10) {
         gameState.runtime.lives = 0;
@@ -858,7 +858,7 @@ export function triggerBossPhaseTransition(newPhase) {
 
     boss.phase = newPhase;
     boss.phaseTransitioning = true;
-    boss.phaseTransitionTimer = BOSS_PHASE_TRANSITION_FRAMES;
+    boss.phaseTransitionTimer = BOSS_PHASE_TRANSITION_MS;
 
     playBossPhaseSound();
 
@@ -870,16 +870,16 @@ export function triggerBossPhaseTransition(newPhase) {
         boss.speed = boss.baseSpeed * 1.5;
         boss.fireInterval = Math.round(boss.baseFireInterval * 0.8);
         boss.burstShotsPerCycle = 3;
-        boss.burstPauseFrames = Math.round(boss.baseBurstPauseFrames * 0.8);
+        boss.burstPauseMs = Math.round(boss.baseBurstPauseMs * 0.8);
     } else if (newPhase === 3) {
         boss.speed = boss.baseSpeed * 2.0;
         boss.fireInterval = Math.round(boss.baseFireInterval * 0.6);
         boss.burstShotsPerCycle = 4;
-        boss.burstPauseFrames = Math.round(boss.baseBurstPauseFrames * 0.6);
+        boss.burstPauseMs = Math.round(boss.baseBurstPauseMs * 0.6);
     }
 
     boss.burstShotsRemaining = boss.burstShotsPerCycle;
-    boss.fireTimer = 60;
+    boss.fireTimer = 1000;
 
     const phaseColors = boss.actColors || ACT_BOSS_CONFIG[4];
     const flashColor = newPhase === 2 ? phaseColors.flashP2 : phaseColors.flashP3;
@@ -1335,7 +1335,7 @@ export function escapeBoss() {
     }
 
     boss.escaping = true;
-    boss.escapeTimer = 120;
+    boss.escapeTimer = 2000;
     boss.health = 1;
     boss.fireTimer = 99999;
 

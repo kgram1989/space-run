@@ -102,7 +102,7 @@ export function createShieldMesh() {
     player.mesh.add(shieldGroup);
 }
 
-export function updateShield() {
+export function updateShield(dt) {
     if (!player.shieldMesh) return;
 
     if (player.shieldStrength > 0) {
@@ -120,9 +120,9 @@ export function updateShield() {
     }
 
     if (player.invulnerable) {
-        player.invulnerableTimer--;
+        player.invulnerableTimer -= dt;
         if (player.mesh) {
-            player.mesh.visible = Math.floor(player.invulnerableTimer / 4) % 2 === 0;
+            player.mesh.visible = Math.floor(player.invulnerableTimer / 67) % 2 === 0;
         }
         if (player.invulnerableTimer <= 0) {
             player.invulnerable = false;
@@ -174,7 +174,7 @@ export function damageShield() {
         breakShield();
     } else {
         player.invulnerable = true;
-        player.invulnerableTimer = 18;
+        player.invulnerableTimer = 300;
 
         playShieldHitSound();
         shakeCamera(0.08);
@@ -198,7 +198,7 @@ export function damageShield() {
 export function breakShield() {
     player.shieldStrength = 0;
     player.invulnerable = true;
-    player.invulnerableTimer = 60;
+    player.invulnerableTimer = 1000;
 
     playShieldBreakSound();
     shakeCamera(0.2);

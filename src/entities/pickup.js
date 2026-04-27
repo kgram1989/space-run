@@ -37,17 +37,17 @@ export function spawnPickup(x, y, z, weaponOnly) {
     const group = createPickupGroup(type);
     group.position.set(x, y, z);
     scene.add(group);
-    gameState.entities.pickups.push({ mesh: group, type, life: 480, speed: 0.3 });
+    gameState.entities.pickups.push({ mesh: group, type, life: 8000, speed: 0.3 });
 }
 
 export function spawnExtraLifePickup(x, y, z) {
     const group = createPickupGroup('extraLife');
     group.position.set(x, y, z);
     scene.add(group);
-    gameState.entities.pickups.push({ mesh: group, type: 'extraLife', life: 480, speed: 0.3 });
+    gameState.entities.pickups.push({ mesh: group, type: 'extraLife', life: 8000, speed: 0.3 });
 }
 
-export function updatePickups() {
+export function updatePickups(dt) {
     const pickups = gameState.entities.pickups;
     for (let i = pickups.length - 1; i >= 0; i--) {
         const pickup = pickups[i];
@@ -69,7 +69,7 @@ export function updatePickups() {
             continue;
         }
 
-        pickup.life--;
+        pickup.life -= dt;
         if (pickup.life <= 0) {
             disposeMesh(pickup.mesh);
             scene.remove(pickup.mesh);
