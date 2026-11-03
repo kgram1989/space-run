@@ -17,9 +17,16 @@ export function updateLevel() {
     levelElement.textContent = gameState.progression.currentLevel;
 }
 
+// Display only — use when lives change without damage (game start, extra life).
+export function renderLives() {
+    livesElement.textContent = gameState.runtime.lives;
+}
+
+// Call after the player LOSES a life: updates the display, ends the game at 0,
+// otherwise plays the hit sound, restores shields and grants invulnerability.
 export function updateLives() {
     const { runtime } = gameState;
-    livesElement.textContent = runtime.lives;
+    renderLives();
     if (runtime.lives <= 0) {
         // endGame is set on globalThis by main.js at startup
         globalThis.endGame?.();

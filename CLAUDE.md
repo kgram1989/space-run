@@ -155,6 +155,37 @@ functions call it synchronously before creating oscillators.
 
 Mute state stored in `localStorage('spaceRunMuted')`. `applyMuteState()` sets `masterGain.gain`.
 
+### Art Style (Neon / Toon)
+
+`src/rendering/style.js` — toggled by the 🎨 HUD button (`#styleBtn`) or the **T** key; persisted in
+`localStorage('spaceRunArtStyle')` (`'neon'` | `'toon'`). Neon is the original look and is untouched.
+
+Toon mode is applied at runtime, not by rewriting materials:
+- Every `MeshStandardMaterial` is swapped for a `MeshToonMaterial` (3-band gradient ramp, brightened
+  palette). The original is kept on `mesh.userData.neonMaterial`, the toon one on `userData.toonMaterial`.
+- Opaque parts with a geometry radius ≥ 0.25 get an inverted-hull outline child
+  (`userData.isOutline`, shared `outlineMaterial`). `updateToonOutlines()` (game loop) hides outlines
+  of fading parts and forgets outlines of removed objects.
+- A hemisphere + directional light group, softer bloom, and a lifted background/star palette
+  (`applyTheme()` in `scene.js` reads `scene.userData.toon`).
+- `scene.add` is wrapped so new objects are styled automatically. **A child added to an object already
+  in the scene must call `styleObject(child)`** (e.g. the player shield in `createShieldMesh()`).
+- Code should read `mesh.material` dynamically (not cache material refs at creation) so it follows swaps.
+  Toon materials support `color`, `emissive`, `emissiveIntensity`, `opacity`, `transparent`.
+
+### Hit Flash
+
+Use `flashMaterial(mat, { emissiveIntensity | color | opacity }, ms)` from `effects.js` for temporary
+material flashes. It captures the true original once (repeat hits extend the flash) and is restored by
+`updateMaterialFlashes()` in the game loop. Don't hand-roll `setTimeout` restores — overlapping hits
+captured the flashed value as the "original" and left bosses stuck white.
+
+### Lives HUD
+
+`renderLives()` only updates the display — use it when lives change without damage (start, extra life).
+`updateLives()` is for **losing** a life: it also ends the game at 0, plays the hit sound, restores
+shields and grants invulnerability.
+
 ### High Score System
 
 **Primary**: Firebase Realtime Database (top 5 global, stored at `/highscores`)
@@ -236,3 +267,7 @@ stopTouchFire()                          — touch fire interval
 5. **Shield is an integer `shieldStrength` (0–3)**, not a boolean. Check `> 0`, not truthiness.
 6. **`GAME_NARRATIVE.levels` is 0-indexed** — level N data is at index `N - 1`.
 7. **Boss health is capped at 60** (`Math.min(15 + currentLevel * 5, 60)`).
+8. **Boss timers are in milliseconds** — `fireTimer`/`fireInterval` are ms; pass `dt` to
+   `defaultBossAttack(b, dt)` and `updateBossCustomMechanics(b, dt)` and subtract `dt`, never `--`.
+9. **`disposeMesh()` skips** materials flagged `userData.shared` and outline geometry
+   (`userData.isOutline`), and also disposes the inactive style's material on `userData`.

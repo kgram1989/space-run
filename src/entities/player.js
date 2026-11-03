@@ -1,6 +1,7 @@
 import { gameState, player, isMobile, WEAPONS, SHARED_GEO, SHARED_MAT, disposeMesh, lerp } from '../state.js';
 import { scene, camera } from '../rendering/scene.js';
 import { shakeCamera } from '../rendering/effects.js';
+import { styleObject } from '../rendering/style.js';
 import { playShootSound, playShieldHitSound, playShieldBreakSound } from '../systems/audio.js';
 import { updateWeaponHUD, updateShieldHUD, triggerDamageFlash } from '../systems/hud.js';
 
@@ -100,6 +101,7 @@ export function createShieldMesh() {
 
     player.shieldMesh = shieldGroup;
     player.mesh.add(shieldGroup);
+    styleObject(shieldGroup); // added to a live object, not via scene.add
 }
 
 export function updateShield(dt) {

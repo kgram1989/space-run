@@ -6,7 +6,7 @@ import {
 import { scene } from '../rendering/scene.js';
 import { playExplosionSound, playLevelCompleteSound, playBossPhaseSound, playBossHitSound, playEnemyShootSound } from '../systems/audio.js';
 import { updateScore, updateLives, createScorePopup } from '../systems/hud.js';
-import { createExplosion } from '../rendering/effects.js';
+import { createExplosion, flashMaterial } from '../rendering/effects.js';
 import { createEnemyBullet } from './bullet.js';
 import { spawnPickup, spawnExtraLifePickup } from './pickup.js';
 import { damagePlayer } from './player.js';
@@ -16,6 +16,13 @@ import {
 } from '../data/bossConfigs.js';
 import { createPortal, animatePortalEntry } from '../systems/progression.js';
 import { triggerVictory } from '../systems/progression.js';
+
+// L19 (The Emissary): charge needed for an overload ring, and the minimum gap
+// between hit-triggered counter-volleys (otherwise every blaster volley triggers one).
+// L14 (The Architect): half-width of the safe opening between the closing walls.
+const L14_GAP_HALF = 3.5;
+const L19_OVERLOAD_CHARGE = 18;
+const L19_COUNTER_COOLDOWN_MS = 800;
 
 export function createBoss() {
     const currentLevel = gameState.progression.currentLevel;
@@ -196,7 +203,7 @@ export function updateBossAttack(b, dt) {
         }
         case 13:
             if (b.custom.rageTier >= 3) return;
-            defaultBossAttack(b); return;
+            defaultBossAttack(b, dt); return;
         case 17:
         case 18: return;
         case 19: {
@@ -216,7 +223,7 @@ export function updateBossAttack(b, dt) {
     }
 }
 
-export function updateBossCustomMechanics(b) {
+export function updateBossCustomMechanics(b, dt) {
     const c = b.custom;
     const bossPos = b.mesh.position;
     const bullets = gameState.entities.bullets;
@@ -235,9 +242,11 @@ export function updateBossCustomMechanics(b) {
                 const spd = Math.sqrt(tb.velocity.x * tb.velocity.x + tb.velocity.z * tb.velocity.z);
                 if (spd > 0.55) { tb.velocity.x *= 0.55 / spd; tb.velocity.z *= 0.55 / spd; }
             }
-            b.fireTimer--;
-            if (b.fireTimer <= 0) {
-                b.fireTimer = b.fireInterval;
+            // Own ms timer — sharing b.fireTimer with the default attack (and
+            // decrementing it per frame) meant the homing shot almost never fired.
+            c.trackTimer -= dt;
+            if (c.trackTimer <= 0) {
+                c.trackTimer = b.fireInterval * 2;
                 createEnemyBullet(bossPos.x, bossPos.y, bossPos.z, player.x, player.y, player.z, 0.3);
                 const enemyBullets = gameState.entities.enemyBullets;
                 if (enemyBullets.length > 0) {
@@ -557,7 +566,7 @@ export function updateBossCustomMechanics(b) {
                 }
             }
             if (c.rageTier >= 3) {
-                b.fireTimer--;
+                b.fireTimer -= dt; // fireInterval is in ms
                 if (b.fireTimer <= 0) {
                     b.fireTimer = b.fireInterval;
                     for (let d = 0; d < 8; d++) {
@@ -582,8 +591,9 @@ export function updateBossCustomMechanics(b) {
                 const barMat = new THREE.MeshStandardMaterial({ color: 0x00ccff, emissive: 0x0088cc, emissiveIntensity: 0.8, transparent: true, opacity: 0.75 });
                 const barL = new THREE.Mesh(barGeo, barMat.clone());
                 const barR = new THREE.Mesh(barGeo, barMat.clone());
-                barL.position.set(gapX - 7, -5, player.z - 3);
-                barR.position.set(gapX + 7, -5, player.z - 3);
+                // Walls sit on the player's lane (they were at z-3, out of hit range)
+                barL.position.set(gapX - L14_GAP_HALF - 4 - 20, -5, player.z);
+                barR.position.set(gapX + L14_GAP_HALF + 4 + 20, -5, player.z);
                 scene.add(barL); scene.add(barR);
                 c.barriers.push({ meshL: barL, meshR: barR, life: 150, gapX });
             }
@@ -597,8 +607,9 @@ export function updateBossCustomMechanics(b) {
                 }
                 const t = 1 - bar.life / 150;
                 const slideOff = 20 * (1 - t);
-                bar.meshL.position.x = bar.gapX - 4 - slideOff;
-                bar.meshR.position.x = bar.gapX + 4 + slideOff;
+                // Walls close in but stop short, leaving a 2*L14_GAP_HALF opening to fly through
+                bar.meshL.position.x = bar.gapX - L14_GAP_HALF - 4 - slideOff;
+                bar.meshR.position.x = bar.gapX + L14_GAP_HALF + 4 + slideOff;
                 const px = player.x;
                 const lRight = bar.meshL.position.x + 4;
                 const rLeft  = bar.meshR.position.x - 4;
@@ -680,10 +691,10 @@ export function updateBossCustomMechanics(b) {
             b.mesh.position.z = 50 + Math.sin(c.t * 2) * 12;
             b.mesh.traverse(child => {
                 if (child.userData.isChargeRing) {
-                    child.material.opacity = Math.min(c.chargeLevel / 12, 1.0) * 0.8;
+                    child.material.opacity = Math.min(c.chargeLevel / L19_OVERLOAD_CHARGE, 1.0) * 0.8;
                 }
             });
-            if (c.chargeLevel >= 12) {
+            if (c.chargeLevel >= L19_OVERLOAD_CHARGE) {
                 c.chargeLevel = 0;
                 c.overloadTimer = 1;
             }
@@ -843,7 +854,7 @@ export function updateBoss(dt) {
         }
     }
 
-    updateBossCustomMechanics(boss);
+    updateBossCustomMechanics(boss, dt);
     updateBossAttack(boss, dt);
 
     if (boss.mesh.position.z < -10) {
@@ -1022,15 +1033,20 @@ export function checkBossCollision() {
                 if (!(va > Math.PI * 0.6 && va < Math.PI * 1.4)) continue;
             }
             if (boss.level === 19) {
-                boss.custom.chargeLevel++;
-                if (boss.custom.chargeLevel % 3 === 0 && boss.custom.chargeLevel < 12) {
+                // The Emissary absorbs hits as charge (counter-volleys + overload ring),
+                // but hits still deal damage — previously it skipped damage and was unkillable.
+                const c19 = boss.custom;
+                c19.chargeLevel++;
+                const now = performance.now();
+                if (c19.chargeLevel % 3 === 0 && c19.chargeLevel < L19_OVERLOAD_CHARGE &&
+                    now - c19.lastCounterAt >= L19_COUNTER_COOLDOWN_MS) {
+                    c19.lastCounterAt = now;
                     const bp = boss.mesh.position;
                     for (let s = -2; s <= 2; s++) {
                         createEnemyBullet(bp.x, bp.y, bp.z, player.x + s * 4.5, player.y, player.z, 0.42);
                     }
                     playEnemyShootSound();
                 }
-                continue;
             }
 
             boss.health -= (bullet.damage || 1);
@@ -1038,22 +1054,12 @@ export function checkBossCollision() {
 
             const bossFlashParts = boss.cached.emissiveChildren;
             for (let fi = 0; fi < bossFlashParts.length; fi++) {
-                const mat = bossFlashParts[fi].material;
-                const originalIntensity = mat.emissiveIntensity;
-                mat.emissiveIntensity = 2;
-                setTimeout(() => { if (mat) mat.emissiveIntensity = originalIntensity; }, 100);
+                flashMaterial(bossFlashParts[fi].material, { emissiveIntensity: 2 }, 100);
             }
 
             const shields = boss.cached.shields;
             for (let si = 0; si < shields.length; si++) {
-                const shieldMat = shields[si].material;
-                const origColor = shieldMat.color.getHex();
-                const origOpacity = shieldMat.opacity;
-                shieldMat.color.setHex(0xffffff);
-                shieldMat.opacity = 0.5;
-                setTimeout(() => {
-                    if (shieldMat) { shieldMat.color.setHex(origColor); shieldMat.opacity = origOpacity; }
-                }, 80);
+                flashMaterial(shields[si].material, { color: 0xffffff, opacity: 0.5 }, 80);
             }
 
             if (!isMobile) {

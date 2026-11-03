@@ -4,11 +4,13 @@ import { loadLevelTheme } from './rendering/scene.js';
 import {
     updateCameraShake,
     updateParticles, updateEngineParticles, updateEnemyEngineParticles,
-    createEngineParticles, createEnemyEngineParticles
+    createEngineParticles, createEnemyEngineParticles,
+    updateMaterialFlashes, clearMaterialFlashes
 } from './rendering/effects.js';
+import { initArtStyle, updateToonOutlines } from './rendering/style.js';
 import { playGameOverSound, toggleMute } from './systems/audio.js';
 import {
-    updateScore, updateLives, updateLevel, updateWeaponHUD,
+    updateScore, renderLives, updateLevel, updateWeaponHUD,
     updateShieldHUD, triggerDamageFlash, togglePause,
     syncWeaponHudPlacement, displayHighScores, updateHighScoreDisplay,
     isTopScore, addHighScore, loadHighScores, getCurrentHighScoreValue,
@@ -28,6 +30,14 @@ import { initKeyboard, initTouchControls, initTiltControls, stopTouchFire } from
 // Engine particle delta-time interval: ~33ms = 30 particles/sec at 60fps
 const ENGINE_PARTICLE_INTERVAL_MS = 33;
 const ENEMY_PARTICLE_INTERVAL_MS = 67;
+
+let nameEntryController = null;
+function abortNameEntry() {
+    if (nameEntryController) {
+        nameEntryController.abort();
+        nameEntryController = null;
+    }
+}
 
 export async function endGame() {
     gameState.runtime.gameRunning = false;
@@ -117,8 +127,19 @@ export async function endGame() {
         nameEntry.classList.remove('hidden');
         setTimeout(() => nameInput.focus(), 50);
 
+        // Listeners are scoped to this game over: aborting removes them, so a
+        // skipped entry can never submit its (stale) score on a later game.
+        abortNameEntry();
+        const controller = new AbortController();
+        nameEntryController = controller;
+        const { signal } = controller;
+
         await new Promise(resolve => {
+            let submitted = false;
             async function doSubmit() {
+                if (submitted) return;
+                submitted = true;
+                controller.abort();
                 const name = (nameInput.value.trim() || 'Anonymous').substring(0, 20);
                 latestGameSummary.playerName = sanitizeShareName(name);
                 latestGameSummary.shareNamePrompted = true;
@@ -128,9 +149,14 @@ export async function endGame() {
                 nameEntry.classList.add('hidden');
                 resolve();
             }
-            submitBtn.addEventListener('click', doSubmit, { once: true });
-            nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSubmit(); }, { once: true });
+            submitBtn.addEventListener('click', doSubmit, { signal });
+            nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSubmit(); }, { signal });
+            // Abandoned (player started a new game) — stop waiting
+            signal.addEventListener('abort', () => {
+                if (!submitted) { nameEntry.classList.add('hidden'); resolve(); }
+            }, { once: true });
         });
+        if (nameEntryController === controller) nameEntryController = null;
     } else {
         displayHighScores(await loadHighScores());
     }
@@ -142,6 +168,9 @@ export async function endGame() {
 export function startGame(fromLevel = 1) {
     const entities = gameState.entities;
     const timers = gameState.timers;
+
+    abortNameEntry();
+    clearMaterialFlashes();
 
     entities.bullets.forEach(b => { scene.remove(b.mesh); });
     entities.enemies.forEach(e => { disposeMesh(e.mesh); scene.remove(e.mesh); });
@@ -222,7 +251,7 @@ export function startGame(fromLevel = 1) {
     updateShieldHUD();
 
     updateScore();
-    updateLives();
+    renderLives();
     updateLevel();
     updateWeaponHUD();
     updateHighScoreDisplay();
@@ -291,6 +320,8 @@ function gameLoop(timestamp = 0) {
     starField.update();
     updatePortal();
     updateCameraShake();
+    updateMaterialFlashes();
+    updateToonOutlines();
 
     const { bossActive } = gameState.progression;
     if (bossActive) {
@@ -342,6 +373,7 @@ initKeyboard();
 initTouchControls();
 initTiltControls();
 
+initArtStyle();
 syncWeaponHudPlacement();
 updateHighScoreDisplay();
 initializeBriefingScreen();
