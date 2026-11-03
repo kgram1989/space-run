@@ -169,6 +169,12 @@ body {
     transform: scale(1.1);
 }
 
+/* Toon-style toggle when active */
+.hud-btn[aria-pressed="true"] {
+    border-color: rgba(255, 214, 102, 0.85);
+    box-shadow: 0 0 12px rgba(255, 214, 102, 0.45);
+}
+
 .boss-health-bar {
     position: absolute;
     top: 60px;
@@ -313,6 +319,7 @@ body {
     padding: 12px 30px;
     border-radius: 30px;
     border: 1px solid rgba(255, 255, 255, 0.1);
+    white-space: nowrap;
 }
 
 /* Glassmorphism Modal Base */

@@ -125,7 +125,7 @@ export function getEscapeMinionCount(level) {
 
 export function getBossCustomState(level) {
     switch (level) {
-        case 1:  return { trackingBullets: [] };
+        case 1:  return { trackingBullets: [], trackTimer: 1500 };
         case 2:  return { mines: [], mineDropTimer: 0 };
         case 3:  return { hangarTimer: 0 };
         case 4:  return { dashCooldown: 90, dashing: false, dashTimer: 0, dashVelX: 0, dashVelZ: 0 };
@@ -143,7 +143,7 @@ export function getBossCustomState(level) {
         case 16: return { flankerAngle: 0 };
         case 17: return { cannonTimers: Array(12).fill(0), discAngle: 0 };
         case 18: return { waveTimer: 0, faceOpen: false };
-        case 19: return { chargeLevel: 0, overloadTimer: 0, t: 0 };
+        case 19: return { chargeLevel: 0, overloadTimer: 0, t: 0, lastCounterAt: 0 };
         case 20: return { gravityWells: [], ringWaves: [], beamActive: false, beamX: -20, beamDir: 1, beamTimer: 0 };
         default: return {};
     }

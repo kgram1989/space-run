@@ -309,13 +309,22 @@ export const baseCameraPosition = { x: 0, y: 12, z: -18 };
 export const baseCameraLookAt = { x: 0, y: -3, z: 25 };
 
 // Utility functions used everywhere
+function disposeMaterial(m) {
+    if (!m) return;
+    if (Array.isArray(m)) { m.forEach(disposeMaterial); return; }
+    if (m.userData && m.userData.shared) return; // e.g. the toon outline material
+    m.dispose();
+}
+
 export function disposeMesh(obj) {
     if (!obj) return;
-    if (obj.geometry) obj.geometry.dispose();
-    if (obj.material) {
-        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
-        else obj.material.dispose();
-    }
+    const ud = obj.userData || {};
+    // Toon outlines reuse their parent's geometry — the parent disposes it
+    if (obj.geometry && !ud.isOutline) obj.geometry.dispose();
+    disposeMaterial(obj.material);
+    // Toon mode keeps the inactive style's material on userData
+    if (ud.neonMaterial && ud.neonMaterial !== obj.material) disposeMaterial(ud.neonMaterial);
+    if (ud.toonMaterial && ud.toonMaterial !== obj.material) disposeMaterial(ud.toonMaterial);
     if (obj.children) {
         [...obj.children].forEach(child => disposeMesh(child));
     }

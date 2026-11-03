@@ -2,7 +2,7 @@ import { gameState, player, disposeMesh, LEVEL_MESSAGE_DURATION, LEVEL_MESSAGE_F
 import { scene } from '../rendering/scene.js';
 import { loadLevelTheme } from '../rendering/scene.js';
 import { playPortalSound } from './audio.js';
-import { updateLevel, updateLives } from './hud.js';
+import { updateLevel, renderLives } from './hud.js';
 import { GAME_NARRATIVE } from '../data/levels.js';
 
 export function createPortal() {
@@ -116,7 +116,7 @@ export function nextLevel() {
     loadLevelTheme(gameState.progression.currentLevel);
     if (gameState.progression.currentLevel % 3 === 0 && gameState.runtime.lives < 3) {
         gameState.runtime.lives++;
-        updateLives();
+        renderLives();
     }
     showLevelMessage(gameState.progression.currentLevel);
     gameState.timers.levelTransitionTimeout = setTimeout(() => {

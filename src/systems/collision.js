@@ -1,6 +1,6 @@
 import { gameState, player, difficultySettings, ENEMY_TYPE_POINTS, disposeMesh } from '../state.js';
 import { scene } from '../rendering/scene.js';
-import { createExplosion } from '../rendering/effects.js';
+import { createExplosion, flashMaterial } from '../rendering/effects.js';
 import { updateScore, updateLives, createScorePopup, triggerDamageFlash } from '../systems/hud.js';
 import { damageShield } from '../entities/player.js';
 import { spawnPickup, spawnExtraLifePickup } from '../entities/pickup.js';
@@ -89,11 +89,7 @@ export function checkCollisions() {
                 const flashParts = enemy.cached.allMaterials;
                 for (let fi = 0; fi < flashParts.length; fi++) {
                     const mat = flashParts[fi].material;
-                    if (mat && mat.emissive) {
-                        const orig = mat.emissiveIntensity;
-                        mat.emissiveIntensity = 2.0;
-                        setTimeout(() => { if (mat) mat.emissiveIntensity = orig; }, 100);
-                    }
+                    if (mat && mat.emissive) flashMaterial(mat, { emissiveIntensity: 2.0 }, 100);
                 }
 
                 if (enemy.hp > 0) {

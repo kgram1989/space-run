@@ -2,6 +2,51 @@ import { gameState, baseCameraPosition, baseCameraLookAt, SHARED_GEO, disposeMes
 import { scene, camera, engineParticlePool, enemyEngineParticlePool } from './scene.js';
 import { playExplosionSound } from '../systems/audio.js';
 
+// ── Material hit-flash ──────────────────────────────────────────────────────
+// Temporarily overrides material properties and restores the ORIGINAL values
+// later. Repeat flashes on a material already flashing extend the flash
+// instead of capturing the flashed value as the "original" (which used to leave
+// bosses stuck white). Restored from the game loop — no setTimeout.
+const activeFlashes = new Map(); // material -> { until, restore: { key: value } }
+
+export function flashMaterial(mat, overrides, durationMs = 100) {
+    if (!mat) return;
+    let entry = activeFlashes.get(mat);
+    if (!entry) {
+        entry = { until: 0, restore: {} };
+        activeFlashes.set(mat, entry);
+    }
+    for (const key in overrides) {
+        if (!(key in entry.restore)) {
+            entry.restore[key] = key === 'color' ? mat.color.getHex() : mat[key];
+        }
+        if (key === 'color') mat.color.setHex(overrides[key]);
+        else mat[key] = overrides[key];
+    }
+    entry.until = performance.now() + durationMs;
+}
+
+function restoreFlash(mat, entry) {
+    for (const key in entry.restore) {
+        if (key === 'color') mat.color.setHex(entry.restore[key]);
+        else mat[key] = entry.restore[key];
+    }
+}
+
+export function updateMaterialFlashes(now = performance.now()) {
+    for (const [mat, entry] of activeFlashes) {
+        if (now >= entry.until) {
+            restoreFlash(mat, entry);
+            activeFlashes.delete(mat);
+        }
+    }
+}
+
+export function clearMaterialFlashes() {
+    for (const [mat, entry] of activeFlashes) restoreFlash(mat, entry);
+    activeFlashes.clear();
+}
+
 export function shakeCamera(intensity = 0.5) {
     gameState.effects.cameraShake.intensity = intensity;
 }

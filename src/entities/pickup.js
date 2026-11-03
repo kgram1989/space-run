@@ -1,7 +1,7 @@
 import { gameState, player, PICKUP_TYPES, PICKUP_COLORS, PICKUP_SYMBOLS, WEAPONS, disposeMesh } from '../state.js';
 import { scene } from '../rendering/scene.js';
 import { updateShieldVisuals } from './player.js';
-import { updateWeaponHUD, updateShieldHUD, showWeaponText } from '../systems/hud.js';
+import { updateWeaponHUD, updateShieldHUD, showWeaponText, renderLives } from '../systems/hud.js';
 
 export function createPickupGroup(type) {
     const color = PICKUP_COLORS[type];
@@ -89,8 +89,7 @@ export function collectPickup(pickup) {
         case 'extraLife':
             if (gameState.runtime.lives < 3) {
                 gameState.runtime.lives++;
-                const livesEl = document.getElementById('lives');
-                if (livesEl) livesEl.textContent = gameState.runtime.lives;
+                renderLives();
                 showWeaponText('\u2665 +1');
             }
             break;

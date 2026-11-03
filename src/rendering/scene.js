@@ -112,7 +112,7 @@ function createStars() {
         geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
         const points = new THREE.Points(geo, mat);
         scene.add(points);
-        layers.push({ geo, mat, twinkle: cfg.twinkle, baseOpacity: cfg.opacity });
+        layers.push({ geo, mat, twinkle: cfg.twinkle, baseOpacity: cfg.opacity, baseSize: cfg.size });
     });
 
     let frame = 0;
@@ -140,14 +140,35 @@ function createStars() {
 
 export const starField = createStars();
 
+let currentTheme = GAME_NARRATIVE.levels[0].theme;
+
 export function loadLevelTheme(levelNumber) {
     const levelData = GAME_NARRATIVE.levels[levelNumber - 1];
-    const theme = levelData ? levelData.theme : GAME_NARRATIVE.levels[GAME_NARRATIVE.levels.length - 1].theme;
-    scene.background = new THREE.Color(theme.background.color);
-    scene.fog.color = new THREE.Color(theme.background.color);
+    currentTheme = levelData ? levelData.theme : GAME_NARRATIVE.levels[GAME_NARRATIVE.levels.length - 1].theme;
+    applyTheme();
+}
+
+// Toon mode lifts the near-black space backgrounds to a saturated dusk tone
+// (same hue), and draws bigger, warmer stars.
+function toonBackground(hex) {
+    const hsl = {};
+    new THREE.Color(hex).getHSL(hsl);
+    return new THREE.Color().setHSL(hsl.h, Math.max(hsl.s * 0.5, 0.45), 0.19);
+}
+
+// Re-applies the current level theme for the active art style (scene.userData.toon).
+export function applyTheme() {
+    const toon = !!scene.userData.toon;
+    const bg = toon ? toonBackground(currentTheme.background.color) : new THREE.Color(currentTheme.background.color);
+    scene.background = bg;
+    scene.fog.color = bg.clone();
     if (starField && starField.layers) {
-        const c = new THREE.Color(theme.starColor);
-        starField.layers.forEach(layer => layer.mat.color.set(c));
+        const isWhite = currentTheme.starColor === 0xffffff;
+        const c = new THREE.Color(toon && isWhite ? 0xfff6c8 : currentTheme.starColor);
+        starField.layers.forEach(layer => {
+            layer.mat.color.set(c);
+            layer.mat.size = layer.baseSize * (toon ? 2.2 : 1);
+        });
     }
 }
 
